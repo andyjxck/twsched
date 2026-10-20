@@ -1,0 +1,30 @@
+{
+  "name": "White Swan Staff (demo)",
+  "short_name": "Swan Staff",
+  "description": "Rota, holiday, swaps and team news for the White Swan, Henley-in-Arden.",
+  "id": "/twsched/",
+  "start_url": "/twsched/",
+  "scope": "/twsched/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f3ea",
+  "theme_color": "#1f3a2e",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
