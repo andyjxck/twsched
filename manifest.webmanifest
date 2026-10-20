@@ -1,7 +1,7 @@
 {
-  "name": "White Swan Staff",
-  "short_name": "Swan Staff",
-  "description": "Rota, events, payslips and time off for the White Swan, Henley-in-Arden.",
+  "name": "Staff Hub",
+  "short_name": "Staff Hub",
+  "description": "Rota, events, payslips and time off for your team.",
   "id": "/twsched/",
   "start_url": "/twsched/",
   "scope": "/twsched/",
