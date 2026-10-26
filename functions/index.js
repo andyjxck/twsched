@@ -853,3 +853,7 @@ exports.onStaffDirectory = onDocumentWritten('staff/{uid}', async (event) => {
   if (entry) await ref.set(entry);
   else await ref.delete();
 });
+
+// "Others on this shift": names, positions, times and the leader star for colleagues on an
+// overlapping published shift. Minimal projection for team members (see othersOnShift.js).
+exports.othersOnShift = require('./othersOnShift').othersOnShift;
