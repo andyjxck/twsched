@@ -20,7 +20,7 @@ service cloud.firestore {
     function isManager() { return role() in ['owner', 'manager']; }
     function isMember() { return role() in ['owner', 'manager', 'staff', 'payroll']; } // anyone signed in to the hub
     // ---- Payroll permission map: change these to adjust what each user type can do with pay. ----
-    function canSeeHours() { return role() in ['owner', 'manager', 'payroll']; }    // rota hours, pay periods, holiday
+    function canSeeHours() { return role() in ['owner', 'manager', 'payroll']; }    // rota hours, contracts, holiday (not pay periods)
     function canSignOffHours() { return role() == 'owner'; }                        // approve and lock hours (26 Oct: managers can't do payroll)
     function canPayroll() { return role() in ['owner', 'payroll']; }                // pay settings, rates, payslips
     function uid() { return request.auth.uid; }
@@ -393,7 +393,7 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/payPeriods/$(p)).data.get('status', 'open') == 'locked';
     }
     match /payPeriods/{periodId} {
-      allow read: if canSeeHours();
+      allow read: if canPayroll();   // 26 Oct (Andy): the Payroll page is owners and payroll only
       allow create: if canSignOffHours() && isDate(periodId)
         && onlyKeys(['start', 'end', 'status', 'lockedAt', 'lockedBy', 'lockedByName', 'updatedAt', 'updatedBy'])
         && data().start == periodId && isDate(data().end) && data().end >= periodId
@@ -410,7 +410,7 @@ service cloud.firestore {
         && stamped();
       allow delete: if false;
       match /hours/{staffId} {
-        allow read: if canSeeHours();
+        allow read: if canPayroll();
         allow create, update: if canSignOffHours() && !periodLocked(periodId)
           && onlyKeys(['staffId', 'staffName', 'rosteredHours', 'actualHours', 'breakMins', 'overtimeHours',
                        'holidayHours', 'shifts', 'swaps', 'note', 'approved', 'approvedBy', 'approvedByName',
