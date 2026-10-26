@@ -255,10 +255,13 @@ service cloud.firestore {
     }
 
     // ---------- Right to Work documents (file itself lives in Storage: rtw/{staffId}/{docId}.{ext}) ----------
-    // Sensitive identity documents. Owner: upload, see, remove anyone's. Manager: upload only (write-only),
-    // only for people with the staff role, never their own, and can never read or remove them.
-    // Staff: nothing, not even their own. Every upload is re-checked by functions/documents.js (real file of
-    // the stated type, sizes match, download token removed) before it counts in rtwStatus.
+    // Sensitive identity documents. Owner: upload, see, remove anyone's. Managers, payroll and team members:
+    // nothing, not even their own (managers only see the rtwStatus tick). Every upload is re-checked by
+    // functions/documents.js (real file of the stated type, sizes match, check details fit, download token
+    // removed) before it counts in rtwStatus.
+    // Each file belongs to one right to work check (checkId): passport alone, birth/adoption certificate +
+    // NI proof, naturalisation certificate + NI proof, online share code result, or other (1-2 files).
+    // checkedOn = the date the owner did the check; declared = they confirm they checked it themselves.
     function rtwExt(ct) {
       return ct == 'application/pdf' ? 'pdf' : ct == 'image/jpeg' ? 'jpg' : ct == 'image/png' ? 'png'
         : ct == 'image/webp' ? 'webp' : ct == 'image/heic' ? 'heic' : '';
@@ -268,11 +271,26 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/staff/$(staffId))
         && role() == 'owner';
     }
+    function rtwTypeFits(route, slot, t) {
+      return (route == 'passport' && slot == 1 && t in ['passport', 'passport_card'])
+        || (route == 'birth_ni' && ((slot == 1 && t == 'birth_certificate') || (slot == 2 && t == 'ni_evidence')))
+        || (route == 'naturalisation_ni'
+            && ((slot == 1 && t == 'naturalisation_certificate') || (slot == 2 && t == 'ni_evidence')))
+        || (route == 'share_code' && slot == 1 && t == 'share_code')
+        || (route == 'other' && slot in [1, 2]);
+    }
     function validStaffDoc(docId) {
       return onlyKeys(['staffId', 'staffName', 'kind', 'docType', 'fileName', 'contentType', 'size', 'storagePath',
-                       'uploadedAt', 'uploadedBy', 'uploadedByName'])
+                       'uploadedAt', 'uploadedBy', 'uploadedByName', 'checkId', 'route', 'slot', 'checkedOn', 'declared'])
         && data().kind == 'rtw'
-        && data().docType in ['passport', 'brp', 'share_code', 'birth_certificate', 'visa', 'other']
+        && data().docType in ['passport', 'passport_card', 'birth_certificate', 'naturalisation_certificate',
+                              'ni_evidence', 'share_code', 'brp', 'visa', 'other']
+        && data().checkId is string && data().checkId.matches('^[A-Za-z0-9]{20}$')
+        && data().route is string && data().slot is int
+        && rtwTypeFits(data().route, data().slot, data().docType)
+        && data().checkedOn is string
+        && data().checkedOn.matches('^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+        && data().declared == true
         && str(data().staffName, 80) && str(data().fileName, 200) && data().fileName.size() > 0
         && data().contentType is string && rtwExt(data().contentType) != ''
         && data().size is int && data().size > 0 && data().size <= 10 * 1024 * 1024

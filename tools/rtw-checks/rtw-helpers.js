@@ -1,0 +1,20 @@
+// Right to Work check helpers (Andy, 26 Oct). Pasted into the main bundle by patch_rtw.py, together with
+// rtw-picker.js. Kinds of check, file by file, and small helpers for the owner's file list.
+const __twsRtwAll=["passport","passport_card","birth_certificate","naturalisation_certificate","ni_evidence","share_code","brp","visa","other"];
+const __twsRtwNi={label:"National Insurance proof",types:["ni_evidence"],note:"An official letter or document showing their name and National Insurance number, from a government agency or a previous employer. The number on its own doesn’t count."};
+const __twsRtwRoutes=[
+{id:"passport",label:"Option A: British or Irish passport on its own",required:1,slots:[{label:"Passport",types:["passport","passport_card"]}]},
+{id:"birth_ni",label:"Option B: Birth or adoption certificate + National Insurance proof",required:2,slots:[{label:"Birth or adoption certificate",types:["birth_certificate"]},__twsRtwNi]},
+{id:"naturalisation_ni",label:"Naturalisation or registration certificate + National Insurance proof",required:2,slots:[{label:"Naturalisation or registration certificate",types:["naturalisation_certificate"]},__twsRtwNi]},
+{id:"share_code",label:"Online check with their share code (GOV.UK)",required:1,online:!0,slots:[{label:"GOV.UK check result",types:["share_code"]}]},
+{id:"other",label:"Other documents",required:1,slots:[{label:"Document",types:__twsRtwAll},{label:"Second document (optional)",types:__twsRtwAll}]}];
+function __twsRtwToday(){const d=new Date(),p=x=>String(x).padStart(2,"0");return`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`}
+function __twsRtwId(){const a="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",b=new Uint8Array(20);crypto.getRandomValues(b);return Array.from(b,x=>a[x%62]).join("")}
+function __twsRtwBlank(route){return{checkId:__twsRtwId(),route:route||"passport",docs:[{file:null,docType:""},{file:null,docType:""}],date:__twsRtwToday(),declared:!1}}
+function __twsRtwDateOk(v,today){return/^\d{4}-\d{2}-\d{2}$/.test(v||"")&&v>="2000-01-01"&&v<=today}
+function __twsRtwMissing(st,today){const R=__twsRtwRoutes.find(x=>x.id===st.route),m=[];if(!R)return["the kind of check"];for(let s=0;s<R.required;s++)st.docs[s].file||m.push(R.slots[s].label);__twsRtwDateOk(st.date,today)||m.push("the date of the check");st.declared||m.push("your confirmation");return m}
+function __twsRtwItems(st,today){const R=__twsRtwRoutes.find(x=>x.id===st.route);if(!R||__twsRtwMissing(st,today).length)return[];const out=[];R.slots.forEach((sl,s)=>{const d=st.docs[s];d.file&&out.push({key:`${st.checkId}-${s+1}`,file:d.file,docType:d.docType&&sl.types.includes(d.docType)?d.docType:sl.types[0],checkId:st.checkId,route:R.id,slot:s+1,checkedOn:st.date,declared:!0})});return out}
+function __twsRtwCss(){if(document.getElementById("tws-rtw-css"))return;const e=document.createElement("style");e.id="tws-rtw-css";e.textContent=".rtw-check{display:grid;gap:10px}.rtw-check select,.rtw-check input[type=date]{max-width:100%}.rtw-slot{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;display:grid;gap:6px}.rtw-slot-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.rtw-slot-file{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.rtw-slot-file .fname{flex:1 1 140px;min-width:0;overflow-wrap:anywhere;font-size:.9rem}.rtw-check .check{display:flex;gap:8px;align-items:flex-start}.rtw-check .check input{margin-top:3px;flex:none}";document.head.appendChild(e)}
+function __twsRtwPart(T,p){const two=T.route==="birth_ni"||T.route==="naturalisation_ni"||!!T.checkId&&p.some(x=>x.id!==T.id&&x.checkId===T.checkId);return two&&T.slot?` · file ${T.slot} of 2`:""}
+function __twsRtwRemoveNote(T,p,n){if(T.checkId&&p.some(x=>x.id!==T.id&&x.checkId===T.checkId))return"\n\nIt’s part of a two-file check, so that check won’t count without it.";if(p.length===1)return`\n\nIt’s ${n.name}’s only Right to Work document.`;return""}
+function __twsRtwDate(v){return v?new Date(`${v}T12:00:00`).toLocaleDateString("en-GB"):""}

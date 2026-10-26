@@ -3,14 +3,22 @@
  * Right to Work (RTW)
  *   File:      Storage rtw/{staffId}/{docId}.{pdf|jpg|png|webp|heic}   (private, no public URL)
  *   Metadata:  Firestore staffDocs/{docId}  { staffId, kind: 'rtw', docType, fileName, contentType, size,
- *              storagePath, uploadedAt, uploadedBy, uploadedByName }  + server-set checked/checkedAt
+ *              storagePath, uploadedAt, uploadedBy, uploadedByName,
+ *              checkId, route, slot, checkedOn, declared }  + server-set checked/checkedAt
+ *   Checks (Andy, 26 Oct): the owner records one right to work check at a time. A check is one or two files
+ *   that share a checkId: route 'passport' (British/Irish passport or Irish passport card on its own),
+ *   'birth_ni' (birth or adoption certificate + official proof of NI number), 'naturalisation_ni'
+ *   (naturalisation/registration certificate + NI proof), 'share_code' (the GOV.UK online check result)
+ *   or 'other' (one document, optionally a second). checkedOn is the date the owner says they did the
+ *   check; declared is their statement that they checked the originals (or did the online check) themselves.
+ *   The app stores the copies and that record. It does not check documents itself.
+ *   rtwStatus.ok is true once one complete check (every required file stored and verified) is on file.
+ *   Files from before 26 Oct have no checkId and still count one each.
  *   Status:    Firestore rtwStatus/{staffId}  { ok, count, updatedAt }  written ONLY here.
  *              firestore.rules reads it on every shift write that puts someone on a shift, so nobody can be
  *              assigned until a checked RTW document is on file (Andy, 20 Oct).
  *   Who:       owner - upload, view, download, remove anyone's (incl. their own)
- *              manager - upload only (write-only) for people with the staff role, never their own,
- *                        never view/download/remove; they see only the tick (rtwStatus)
- *              staff - nothing (not even their own files)
+ *              manager, payroll, staff - nothing (managers only see the tick, rtwStatus)
  *   Enforced in firestore.rules + storage.rules; this module re-checks every upload server-side:
  *   the file must exist, match the metadata (size, type), start with the right magic bytes for its type,
  *   and its persistent download token is removed so no permanent link to it exists. A file that fails
@@ -34,6 +42,53 @@ const RTW_TYPES = {
   'image/webp': 'webp',
   'image/heic': 'heic',
 };
+
+// Which document types each kind of check takes, file by file. The second file of 'other' is optional.
+const ALL_DOC_TYPES = ['passport', 'passport_card', 'birth_certificate', 'naturalisation_certificate', 'ni_evidence',
+  'share_code', 'brp', 'visa', 'other'];
+const RTW_ROUTES = {
+  passport: { slots: [['passport', 'passport_card']], required: 1 },
+  birth_ni: { slots: [['birth_certificate'], ['ni_evidence']], required: 2 },
+  naturalisation_ni: { slots: [['naturalisation_certificate'], ['ni_evidence']], required: 2 },
+  share_code: { slots: [['share_code']], required: 1 },
+  other: { slots: [ALL_DOC_TYPES, ALL_DOC_TYPES], required: 1 },
+};
+
+function londonToday() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+// The check details on a new upload. Returns '' if they make sense, or the reason they don't.
+function checkShapeReason(d) {
+  if (typeof d.checkId !== 'string' || !/^[A-Za-z0-9]{20}$/.test(d.checkId)) return 'missing check';
+  const route = RTW_ROUTES[d.route];
+  if (!route) return 'unknown kind of check';
+  if (!Number.isInteger(d.slot) || d.slot < 1 || d.slot > route.slots.length) return 'bad file number';
+  if (!route.slots[d.slot - 1].includes(d.docType)) return 'document type does not fit the check';
+  if (d.declared !== true) return 'check not confirmed';
+  const on = d.checkedOn;
+  if (typeof on !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(on)) return 'bad check date';
+  const dt = new Date(`${on}T12:00:00Z`);
+  if (Number.isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== on) return 'bad check date';
+  if (on < '2000-01-01' || on > londonToday()) return 'check date in the future';
+  return '';
+}
+
+// The other files of the same check must be for the same person, route and date, and not the same file number.
+async function siblingReason(docId, d) {
+  const snap = await db().collection('staffDocs').where('checkId', '==', d.checkId).get();
+  const mine = d.uploadedAt && d.uploadedAt.toMillis ? d.uploadedAt.toMillis() : 0;
+  for (const s of snap.docs) {
+    if (s.id === docId) continue;
+    const o = s.data();
+    if (o.staffId !== d.staffId || o.route !== d.route || o.checkedOn !== d.checkedOn) return 'does not match the rest of the check';
+    if (o.slot === d.slot) {
+      const theirs = o.uploadedAt && o.uploadedAt.toMillis ? o.uploadedAt.toMillis() : 0;
+      if (theirs < mine || (theirs === mine && s.id < docId)) return 'that file of the check is already uploaded';
+    }
+  }
+  return '';
+}
 
 // First bytes of each allowed type. Anything else (HTML, scripts, executables renamed) is refused.
 function magicOk(contentType, b) {
@@ -94,11 +149,42 @@ async function deleteFile(path) {
   });
 }
 
+// Complete checks for one person: every required file stored and verified. Pure, so it can be tested alone.
+function summariseRtw(docs) {
+  let legacy = 0;
+  const groups = new Map();
+  for (const d of docs) {
+    if (d.kind !== 'rtw') continue;
+    if (!d.checkId) { if (d.checked === true) legacy += 1; continue; }
+    if (!groups.has(d.checkId)) groups.set(d.checkId, []);
+    groups.get(d.checkId).push(d);
+  }
+  let complete = 0;
+  let lastCheckedOn = '';
+  for (const g of groups.values()) {
+    const route = RTW_ROUTES[g[0].route];
+    if (!route) continue;
+    let ok = true;
+    for (let slot = 1; slot <= route.required; slot += 1) {
+      if (!g.some((d) => d.slot === slot && d.checked === true && route.slots[slot - 1].includes(d.docType))) ok = false;
+    }
+    if (ok) {
+      complete += 1;
+      if (g[0].checkedOn && g[0].checkedOn > lastCheckedOn) lastCheckedOn = g[0].checkedOn;
+    }
+  }
+  const files = docs.filter((d) => d.kind === 'rtw').length;
+  return { count: complete + legacy, files, incomplete: groups.size - complete, lastCheckedOn };
+}
+
 async function recountRtw(staffId) {
   if (!staffId) return;
   const snap = await db().collection('staffDocs').where('staffId', '==', staffId).where('kind', '==', 'rtw').get();
-  const count = snap.docs.filter((d) => d.get('checked') === true).length;
-  await db().doc(`rtwStatus/${staffId}`).set({ staffId, ok: count > 0, count, updatedAt: FieldValue.serverTimestamp() });
+  const s = summariseRtw(snap.docs.map((d) => d.data()));
+  await db().doc(`rtwStatus/${staffId}`).set({
+    staffId, ok: s.count > 0, count: s.count, files: s.files, incomplete: s.incomplete,
+    lastCheckedOn: s.lastCheckedOn, updatedAt: FieldValue.serverTimestamp(),
+  });
 }
 
 const onStaffDocWritten = onDocumentWritten({ document: 'staffDocs/{docId}', region: 'europe-west2', timeoutSeconds: 60 }, async (event) => {
@@ -112,7 +198,8 @@ const onStaffDocWritten = onDocumentWritten({ document: 'staffDocs/{docId}', reg
     if (after.kind !== 'rtw') reason = 'unknown kind';
     else if (!ext) reason = 'type not allowed';
     else if (after.storagePath !== expectedPath) reason = 'path does not match';
-    else reason = await checkAndLockFile(after.storagePath, { size: after.size, contentType: after.contentType });
+    else reason = checkShapeReason(after) || await siblingReason(event.params.docId, after)
+      || await checkAndLockFile(after.storagePath, { size: after.size, contentType: after.contentType });
     if (reason) {
       logger.warn('RTW upload refused', { staffId: after.staffId, docId: event.params.docId, reason });
       if (expectedPath && after.storagePath === expectedPath) await deleteFile(after.storagePath);
@@ -121,7 +208,7 @@ const onStaffDocWritten = onDocumentWritten({ document: 'staffDocs/{docId}', reg
       return;
     }
     await event.data.after.ref.update({ checked: true, checkedAt: FieldValue.serverTimestamp() });
-    logger.info('RTW document stored', { staffId: after.staffId, by: after.uploadedBy, docType: after.docType });
+    logger.info('RTW document stored', { staffId: after.staffId, by: after.uploadedBy, docType: after.docType, route: after.route, slot: after.slot });
     await recountRtw(after.staffId);
     return;
   }
@@ -165,4 +252,4 @@ async function hasRtw(staffId) {
   return s.exists && s.get('ok') === true;
 }
 
-module.exports = { onStaffDocWritten, onPayslipStored, missingRtwIds, hasRtw, magicOk, RTW_TYPES };
+module.exports = { onStaffDocWritten, onPayslipStored, missingRtwIds, hasRtw, magicOk, RTW_TYPES, RTW_ROUTES, ALL_DOC_TYPES, checkShapeReason, summariseRtw };
