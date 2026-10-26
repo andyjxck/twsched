@@ -291,13 +291,8 @@ function makeFunctions({ sendMail, mailSettings, mailReady, MAIL, staffName, cle
     const p = snap.data();
     if (p.terminated) throw new HttpsError('failed-precondition', 'This person has left. Add them again as a new login if they come back.');
     if (p.active === false) throw new HttpsError('failed-precondition', 'Switch their login back on first.');
-    if (p.primaryOwner) throw new HttpsError('permission-denied', 'Andy’s owner login can only be changed by Andy.');
-    if (role !== 'owner' && p.role !== 'staff') throw new HttpsError('permission-denied', 'Only the owner can change managers.');
-    if (p.role === 'owner') {
-      const t = req.auth.token;
-      const primary = t.role === 'owner' && t.primaryOwner === true && String(t.email || '').toLowerCase() === 'andyblewett9@gmail.com';
-      if (!primary) throw new HttpsError('permission-denied', 'Only Andy can change owner accounts.');
-    }
+    // Any owner can send anyone a new login; a manager only for team members (Andy, 26 Oct).
+    if (role !== 'owner' && (p.role || 'staff') !== 'staff') throw new HttpsError('permission-denied', 'Only an owner can send a new login to an owner, manager or payroll login.');
     let u;
     try {
       u = await auth().getUser(uid);

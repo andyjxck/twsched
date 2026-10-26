@@ -54,17 +54,21 @@ const ROLES = ['owner', 'manager', 'payroll', 'staff'];
 const MANAGER_CAN = {
   addTeamMembers: true,   // add new people as Team members (never as manager/payroll/owner)
   editTeamMembers: true,  // edit a team member's name, job title and phone, resend their login
-  removeStaff: false,     // Team > Remove (terminate) someone. Off by default: owner only.
+  removeStaff: true,      // Team > Has left (terminate) a team member (Andy, 26 Oct: managers handle team members).
 };
-// Main owners (Andy, 26 Oct): Stella and Tom. Only they may create, promote or remove owners.
-// Must match isPrimaryOwnerToken() in firestore.rules. The primaryOwner claim is only ever given to
-// an owner whose email is on this list (claimsFor below).
+// Permissions (Andy, 26 Oct): ANY owner can change anything - owners, managers, payroll and team
+// members: user types, logins, temporary passwords, switching logins on/off and removing people.
+// Managers handle team members (role 'staff') only, never owners, managers or payroll.
+// There is no "main owner" any more. The primaryOwner claim below is a leftover label for Stella and
+// Tom and grants nothing extra anywhere (functions, firestore.rules, storage.rules or the app).
 const PRIMARY_OWNER_EMAILS = ['stellablizzard@gmail.com', 'thomas.meehan@hotmail.co.uk'];
 // Enquiries still go here when no recipient has been set in Settings (unchanged).
 const PRIMARY_OWNER_EMAIL = 'andyblewett9@gmail.com';
-function isPrimaryOwner(req) {
-  return !!(req.auth && req.auth.token && req.auth.token.role === 'owner' && req.auth.token.primaryOwner === true
-    && PRIMARY_OWNER_EMAILS.includes(String(req.auth.token.email || '').toLowerCase()));
+// Safeguard: never leave the app without an active owner. True if someone other than `uid` is
+// still an active owner who has not left.
+async function anotherActiveOwner(uid) {
+  const snap = await db.collection('staff').where('role', '==', 'owner').get();
+  return snap.docs.some((x) => x.id !== uid && x.get('active') !== false && x.get('terminated') !== true);
 }
 async function claimsFor(uid, role) {
   const u = await auth.getUser(uid);
@@ -219,10 +223,7 @@ exports.createStaff = onCall(MAIL, async (req) => {
   if (name.length < 2) throw new HttpsError('invalid-argument', 'Enter a name.');
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !enquiry.isEmail(email)) throw new HttpsError('invalid-argument', 'Enter a valid email address.');
   if (role !== 'staff' && callerRole(req) !== 'owner') {
-    throw new HttpsError('permission-denied', 'Only the owner can add managers, payroll or owners.');
-  }
-  if (role === 'owner' && !isPrimaryOwner(req)) {
-    throw new HttpsError('permission-denied', 'Only a main owner (Stella or Tom) can create owner accounts.');
+    throw new HttpsError('permission-denied', 'Only an owner can add managers, payroll or owners.');
   }
   await onboardingFns.takeInviteSlot(req.auth.uid, null);
   let user;
@@ -271,7 +272,7 @@ exports.updateStaff = onCall(async (req) => {
   const current = snap.data();
   const isOwner = callerRole(req) === 'owner';
   if (!isOwner && current.role !== 'staff' && uid !== req.auth.uid) {
-    throw new HttpsError('permission-denied', 'Only the owner can change managers.');
+    throw new HttpsError('permission-denied', 'Only an owner can change owners, managers or payroll logins.');
   }
   const update = {};
   const authUpdate = {};
@@ -288,18 +289,18 @@ exports.updateStaff = onCall(async (req) => {
   if (current.terminated) throw new HttpsError('failed-precondition', 'This person has left. Add them again as a new login if they come back.');
   if (d.role != null && d.role !== current.role) {
     if (!ROLES.includes(d.role)) throw new HttpsError('invalid-argument', 'Unknown role.');
-    if (!isOwner) throw new HttpsError('permission-denied', 'Only the owner can change roles.');
+    if (!isOwner) throw new HttpsError('permission-denied', 'Only an owner can change user types.');
     if (uid === req.auth.uid) throw new HttpsError('failed-precondition', 'You cannot change your own role.');
-    if ((d.role === 'owner' || current.role === 'owner') && !isPrimaryOwner(req)) {
-      throw new HttpsError('permission-denied', 'Only a main owner (Stella or Tom) can make or change owner accounts.');
+    if (current.role === 'owner' && !(await anotherActiveOwner(uid))) {
+      throw new HttpsError('failed-precondition', 'There has to be at least one owner. Make someone else an owner first.');
     }
     update.role = d.role;
   }
-  if (current.primaryOwner && uid !== req.auth.uid && !isPrimaryOwner(req) && (d.active === false || d.resetPassword)) {
-    throw new HttpsError('permission-denied', 'A main owner’s login can only be changed by a main owner.');
-  }
   if (d.active != null && d.active !== current.active) {
     if (uid === req.auth.uid) throw new HttpsError('failed-precondition', 'You cannot switch off your own login.');
+    if (d.active === false && current.role === 'owner' && !(await anotherActiveOwner(uid))) {
+      throw new HttpsError('failed-precondition', 'There has to be at least one owner with a working login.');
+    }
     update.active = !!d.active;
     authUpdate.disabled = !d.active;
   }
@@ -342,11 +343,12 @@ exports.deleteStaff = onCall(async (req) => {
   const ref = db.doc(`staff/${uid}`);
   const snap = await ref.get();
   const cur = snap.exists ? snap.data() : {};
-  if (cur.primaryOwner) throw new HttpsError('permission-denied', 'A main owner’s login cannot be removed.');
-  if (callerRole(req) !== 'owner' && cur.role && cur.role !== 'staff') {
-    throw new HttpsError('permission-denied', 'Only the owner can remove managers.');
+  if (callerRole(req) !== 'owner' && (!snap.exists || (cur.role || 'staff') !== 'staff')) {
+    throw new HttpsError('permission-denied', 'Only an owner can remove owners, managers or payroll logins.');
   }
-  if (cur.role === 'owner' && !isPrimaryOwner(req)) throw new HttpsError('permission-denied', 'Only a main owner (Stella or Tom) can remove an owner.');
+  if (cur.role === 'owner' && !(await anotherActiveOwner(uid))) {
+    throw new HttpsError('failed-precondition', 'There has to be at least one owner. Make someone else an owner first.');
+  }
   try {
     await auth.deleteUser(uid);
   } catch (e) {

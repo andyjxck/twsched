@@ -2,8 +2,8 @@ rules_version = '2';
 
 // White Swan staff app + public website.
 // Roles live in Firebase Auth custom claims (token.role), set only by Cloud Functions:
-//   owner   - everything, incl. managers and mail settings
-//   manager - rota, events, payslips, enquiries, team (staff role only)
+//   owner   - everything, incl. other owners, managers and mail settings (any owner, 26 Oct)
+//   manager - rota, events, enquiries, team (team members / staff role only)
 //   staff   - own published shifts / payslips / time off / requests, events
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -42,19 +42,12 @@ service cloud.firestore {
       allow read: if isManager() || canPayroll() || (isMember() && staffId == uid());
       allow create, update: if false;
       // Team > Left > Delete (Andy, 21 Oct): an owner can delete the record of someone who has already
-      // left (terminated by the deleteStaff function, which also removed their login). Never Andy's own
-      // primary record, never your own, and only Andy can delete another owner's record (same rule as
-      // deleteStaff). Shifts, payslips, time off and requests each keep their own staffName, nothing
-      // cascades, so history stays intact; Right to Work files are kept (legal retention).
+      // left (terminated by the deleteStaff function, which also removed their login), never their own.
+      // 26 Oct: any owner, whatever the record's role; there is no "main owner" any more.
+      // Shifts, payslips, time off and requests each keep their own staffName, nothing cascades, so
+      // history stays intact; Right to Work files are kept (legal retention).
       allow delete: if role() == 'owner' && staffId != uid()
-        && resource.data.get('terminated', false) == true
-        && resource.data.get('primaryOwner', false) != true
-        && (resource.data.get('role', 'staff') != 'owner' || isPrimaryOwnerToken());
-    }
-    // Main owners (26 Oct): Stella and Tom. Must match PRIMARY_OWNER_EMAILS in functions/index.js.
-    function isPrimaryOwnerToken() {
-      return role() == 'owner' && request.auth.token.get('primaryOwner', false) == true
-        && request.auth.token.get('email', '').lower() in ['stellablizzard@gmail.com', 'thomas.meehan@hotmail.co.uk'];
+        && resource.data.get('terminated', false) == true;
     }
     // Colleague names only (name, job title, role, active), mirrored from /staff by Cloud Functions.
     // The hidden developer account is never mirrored here.
