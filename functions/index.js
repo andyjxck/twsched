@@ -26,6 +26,7 @@ const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const enquiry = require('./enquiry');
 const dayApproval = require('./dayApproval');
+const rotaPublish = require('./rotaPublish');
 const availability = require('./availability');
 const documents = require('./documents');
 const logger = require('firebase-functions/logger');
@@ -407,7 +408,6 @@ async function publishDrafts(req, weekStart, approve) {
   const drafts = unlockedDrafts.filter((d) => !clashing.has(d.id));
   const skippedUnavailable = clashing.size;
   const skippedNoRtw = 0;
-  const counts = {};
   for (let i = 0; i < drafts.length; i += 400) {
     const batch = db.batch();
     drafts.slice(i, i + 400).forEach((d) => {
@@ -415,24 +415,26 @@ async function publishDrafts(req, weekStart, approve) {
     });
     await batch.commit();
   }
-  snap.docs.forEach((d) => {
-    const id = d.get('staffId');
-    counts[id] = (counts[id] || 0) + 1;
-  });
   const name = await staffName(req.auth.uid);
-  const wk = { weekStart, status: approve || status === 'approved' ? 'approved' : 'published' };
+  const wk = { status: approve || status === 'approved' ? 'approved' : 'published' };
   if (approve) Object.assign(wk, { approvedBy: req.auth.uid, approvedByName: name, approvedAt: FieldValue.serverTimestamp() });
   else Object.assign(wk, { publishedBy: req.auth.uid, publishedByName: name, publishedAt: FieldValue.serverTimestamp() });
-  await db.doc(`weeks/${weekStart}`).set(wk, { merge: true });
-  const changed = [...new Set(drafts.map((d) => d.get('staffId')).filter(Boolean))];
-  const title = `Rota for week of ${prettyDate(weekStart)} is out`;
-  await Promise.all(changed.map((uid) => notify([uid], {
-    title,
-    body: `You have ${counts[uid]} shift${counts[uid] === 1 ? '' : 's'} that week.`,
-    link: `#/rota?week=${weekStart}`,
-  })));
-  await emailStaff(changed, title, `${title}. Have a look at your shifts in the staff app.`);
-  return { published: drafts.length, staffNotified: changed.length, status: wk.status, skippedLocked, skippedUnavailable, skippedNoRtw };
+  // One email and one notification per person whose shifts differ from what they were last sent
+  // (everyone on the rota the first time). Nothing is sent per shift (see rotaPublish.js).
+  const messages = await rotaPublish.settleWeek({ weekStart, weekPatch: wk, justPublished: drafts.map((d) => d.id) });
+  const link = `#/rota?week=${weekStart}`;
+  for (const m of messages) {
+    try {
+      await notify([m.uid], { title: m.title, body: m.body, link });
+    } catch (e) {
+      logger.warn('rota notification failed', m.uid, e.message);
+    }
+    await emailStaff([m.uid], m.subject, m.text);
+  }
+  return {
+    published: drafts.length, staffNotified: messages.length, status: wk.status,
+    skippedLocked, skippedUnavailable, skippedNoRtw,
+  };
 }
 exports.publishWeek = onCall(MAIL, async (req) => publishDrafts(req, clean((req.data || {}).weekStart, 10), false));
 // Approving publishes any drafts and finalises the week: after this only the owner can change its shifts
@@ -513,35 +515,18 @@ exports.onRequestCreated = onDocumentCreated('requests/{id}', async (event) => {
   await notify(await managerIds(), { title, body: `${r.staffName}: ${r.shiftLabel || ''}${r.toStaffName ? ` to ${r.toStaffName}` : ''}`, link: '#/inbox' });
 });
 
-function shiftLabel(s) {
-  return `${prettyDate(s.date)} ${s.start}-${s.end}${s.area ? ` (${s.area})` : ''}`;
-}
-function pushNote(notes, uid, title, body) {
-  if (uid) notes.push([uid, title, body]);
-}
-exports.onShiftWritten = onDocumentWritten({ document: 'shifts/{shiftId}', ...MAIL }, async (event) => {
+// A shift write never emails or notifies anyone (Andy, 26 Oct). It only keeps weeks/{week}.pending up to date,
+// which the rota shows as "Unpublished changes" and a "Publish changes" button. Staff hear about it when the
+// week is published (publishWeek / approveWeek above).
+exports.onShiftWritten = onDocumentWritten('shifts/{shiftId}', async (event) => {
   const before = event.data.before.exists ? event.data.before.data() : null;
   const after = event.data.after.exists ? event.data.after.data() : null;
-  const today = londonToday();
-  const notes = [];
-  if (before && after && !before.published && after.published) return; // publishWeek handles it
-  if (after && after.published && after.date >= today) {
-    if (!before || !before.published) {
-      pushNote(notes, after.staffId, 'New shift added', shiftLabel(after));
-    } else if (before.staffId !== after.staffId) {
-      pushNote(notes, after.staffId, 'New shift added', shiftLabel(after));
-      if (before.date >= today) pushNote(notes, before.staffId, 'Shift removed', `${shiftLabel(before)} has been given to someone else.`);
-    } else if (before.date !== after.date || before.start !== after.start || before.end !== after.end
-      || (before.area || '') !== (after.area || '') || (before.breakStart || '') !== (after.breakStart || '')
-      || (before.breakEnd || '') !== (after.breakEnd || '')) {
-      pushNote(notes, after.staffId, 'Shift changed', `${shiftLabel(before)} is now ${shiftLabel(after)}`);
+  for (const p of rotaPublish.touched(before, after)) {
+    try {
+      await rotaPublish.refreshPending({ ...p, shiftId: event.params.shiftId, before, after });
+    } catch (e) {
+      logger.warn('pending refresh failed', p.weekStart, p.uid, e.message);
     }
-  } else if (before && before.published && before.date >= today && (!after || !after.published)) {
-    pushNote(notes, before.staffId, 'Shift removed', `${shiftLabel(before)} has been taken off the rota.`);
-  }
-  for (const [uid, title, body] of notes) {
-    await notify([uid], { title, body, link: '#/' });
-    await emailStaff([uid], `${title}: ${body}`, `${title}: ${body}`);
   }
 });
 

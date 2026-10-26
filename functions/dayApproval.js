@@ -89,12 +89,8 @@ function makeFunctions({ notify, emailStaff, MAIL }) {
       }, { merge: true });
       return drafts.map((d) => d.get('staffId')).filter(Boolean);
     });
-    const people = [...new Set(published)];
-    if (people.length) {
-      const title = `Rota for ${prettyDate(date)} is out`;
-      await Promise.all(people.map((p) => notify([p], { title, body: 'Have a look at your shifts.', link: `#/rota?week=${week}` })));
-      await emailStaff(people, title, `${title}. Have a look at your shifts in the staff app.`);
-    }
+    // Drafts published here are not announced: the rota shows them as unpublished changes until
+    // someone presses Publish (Andy, 26 Oct: emails only when the whole rota is published).
     return { ok: true, date, published: published.length, approvedByName: name, graceUntil: now + GRACE_MS };
   });
 
