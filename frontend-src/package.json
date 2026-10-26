@@ -1,0 +1,35 @@
+{
+  "name": "twsched",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "White Swan staff app: rota, events, payslips, time off, enquiries. Firebase backend.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:rules": "firebase emulators:exec --only firestore,storage,auth --project twsched-f8b16 'node --test tests/rules.test.mjs'",
+    "test:unit": "node --test tests/enquiry.unit.test.mjs",
+    "test:availability": "firebase emulators:exec --only functions,firestore,auth --project demo-twsched 'node --test --test-concurrency=1 tests/availability.emulator.test.mjs'",
+    "test:reset": "firebase emulators:exec --only functions,firestore,auth --project demo-twsched 'node --test --test-concurrency=1 tests/passwordReset.emulator.test.mjs'",
+    "test:days": "firebase emulators:exec --only functions,firestore,auth --project demo-twsched 'node --test --test-concurrency=1 tests/dayApproval.emulator.test.mjs'",
+    "test:holiday": "firebase emulators:exec --only functions,firestore,auth --project demo-twsched 'node --test --test-concurrency=1 tests/holidayDecision.emulator.test.mjs'",
+    "test:holiday-rules": "firebase emulators:exec --only firestore --project demo-twsched 'node --test tests/holidayPaid.rules.test.mjs'",
+    "test:onboarding": "firebase --config firebase.onboarding-test.json emulators:exec --only functions,firestore,auth,storage --project demo-twsched 'node --test --test-concurrency=1 tests/onboarding.emulator.test.mjs'",
+    "test:enquiry": "firebase emulators:exec --only functions,firestore,auth --project demo-twsched 'node --test --test-concurrency=1 tests/enquiry.emulator.test.mjs'"
+  },
+  "dependencies": {
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/lexend": "^5.3.0",
+    "firebase": "^11.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "smtp-server": "^3.20.2",
+    "vite": "^6.0.7"
+  }
+}

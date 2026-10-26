@@ -1,0 +1,7 @@
+/* shifts already on the rota for someone who is now unavailable / on approved holiday */
+.chip.clash { outline: 2px solid #c0392b; outline-offset: -2px; }
+.chip .chip-clash {
+  font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em;
+  color: #fff; background: #c0392b; border-radius: 4px; padding: 0 4px; margin: 2px 0; display: inline-block;
+}
+.cell.off { cursor: not-allowed; }

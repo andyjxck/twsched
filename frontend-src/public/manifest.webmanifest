@@ -1,0 +1,17 @@
+{
+  "name": "Staff Hub",
+  "short_name": "Staff Hub",
+  "description": "Rota, events, payslips and time off for your team.",
+  "id": "/twsched/",
+  "start_url": "/twsched/",
+  "scope": "/twsched/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f3ea",
+  "theme_color": "#1f3a2e",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

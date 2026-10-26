@@ -1,0 +1,19 @@
+/* Segmented 24-hour time entry (Events form). Kept in its own file so other work on base/app css is untouched. */
+fieldset.timeentry { border: 0; margin: 0; padding: 0; min-width: 0; }
+fieldset.timeentry > legend { display: block; padding: 0; margin-bottom: 6px; font-size: 0.95rem; font-weight: 500; color: var(--ink); }
+.timeentry .te-row { display: flex; align-items: center; gap: 6px; }
+.timeentry .te-row input {
+  width: 100%;
+  min-width: 44px;
+  max-width: 4.2em;
+  flex: 1 1 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.1rem;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.timeentry .te-colon { font-weight: 600; font-size: 1.2rem; color: var(--ink); }
+.timeentry input[aria-invalid='true'] { border-color: var(--red); }
+.timeentry .te-err { margin-top: 6px; font-size: 0.9rem; color: #7d1a12; }
+.timeentry .te-hint { margin-top: 4px; font-size: 0.85rem; color: var(--muted); }

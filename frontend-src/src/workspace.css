@@ -1,0 +1,148 @@
+/* ==========================================================================
+   Workspace layout (20 Oct).
+   Andy: every page only used the middle of the screen (except the rota), the top bar had eight buttons and
+   Account repeated them, and pages felt crowded with everything stacked at once.
+   Desktop (900px and up): the menu is a fixed sidebar on the left, and every page uses the same wide frame.
+   Long pages are split into tabs (one focused section at a time) and side-by-side panels.
+   Phone: the slim bar and slide-out menu stay; the same tabs apply.
+   Loaded after calm.css. Edit in place.
+   ========================================================================== */
+
+:root { --side-w: 240px; --frame: 1240px; }
+
+/* ---------- Sidebar (desktop) ---------- */
+@media (min-width: 900px) {
+  .mbar, .scrim { display: none !important; }
+  .sidemenu {
+    display: flex; flex-direction: column;
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 40;
+    width: var(--side-w);
+    padding: 18px 12px 14px;
+    background: var(--paper);
+    border-right: 1px solid var(--line);
+    overflow-y: auto;
+    transform: none; visibility: visible;
+  }
+  .sidemenu .closebtn { display: none; }
+  .side-head { display: block; padding: 2px 10px 14px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  .side-group { margin: 16px 10px 4px; font-size: 0.8125rem; font-weight: 600; color: var(--muted); }
+  .sidelink {
+    position: relative; display: flex; align-items: center; gap: 12px; width: 100%;
+    min-height: 44px; padding: 0 10px;
+    border: 0; border-radius: 10px; background: transparent; color: var(--ink);
+    text-decoration: none; text-align: left; font: inherit; font-size: 0.925rem; font-weight: 500; cursor: pointer;
+  }
+  .sidelink svg { width: 19px; height: 19px; color: var(--muted); flex: none; }
+  .sidelink .lbl { flex: 1; }
+  .sidelink:hover { background: var(--bg); color: var(--ink); }
+  .sidelink.on { background: var(--green-tint); color: var(--green); font-weight: 650; }
+  .sidelink.on svg { color: var(--green); }
+  .sidelink:focus-visible { box-shadow: var(--focus); }
+  .sidelink .badge { position: static; }
+
+  /* every page: the same frame, beside the sidebar, centred in the space that's left */
+  #main { margin: 0 0 0 var(--side-w); max-width: none; padding: 28px 32px 56px; }
+  #main > * { max-width: var(--frame); margin-left: auto; margin-right: auto; }
+  #main > .pagehead { margin-bottom: 18px; }
+}
+@media (min-width: 900px) and (max-width: 1099px) {
+  :root { --side-w: 212px; }
+  #main { padding: 24px 22px 48px; }
+}
+
+/* shared bits of the menu (both sizes) */
+.side-head .wordmark { display: inline-block; color: var(--green); font-size: 1.15rem; font-weight: 700; text-decoration: none; letter-spacing: -0.01em; }
+.side-head .wordmark:hover { color: var(--green-2); }
+.side-head .wordmark:focus-visible { box-shadow: var(--focus); border-radius: 6px; }
+.side-sub { color: var(--muted); font-size: 0.8125rem; margin-top: 2px; }
+.side-foot { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+.side-user { display: flex; align-items: center; gap: 10px; padding: 6px 10px 8px; min-width: 0; }
+.side-initial {
+  flex: none; display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--green-tint); color: var(--green); font-weight: 700; font-size: 0.85rem;
+}
+.side-name { font-weight: 600; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 899px) {
+  .side-foot { margin-top: 12px; }
+}
+
+/* ---------- Tabs ---------- */
+.tabs {
+  display: flex; gap: 2px; min-width: 0;
+  border-bottom: 1px solid var(--line);
+  margin: 0 0 16px;
+  overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab {
+  appearance: none; display: inline-flex; align-items: center; gap: 7px; flex: none;
+  min-height: 44px; padding: 0 12px; margin-bottom: -1px;
+  background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  color: var(--muted); font: inherit; font-size: 0.9rem; font-weight: 550; white-space: nowrap; cursor: pointer;
+}
+.tab:hover { color: var(--ink); }
+.tab.on { color: var(--green); border-bottom-color: var(--green); font-weight: 650; }
+.tab:focus-visible { box-shadow: var(--focus); border-radius: 6px 6px 0 0; }
+.tabcount {
+  display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 6px;
+  background: var(--gold-tint); color: #5b3d08; font-size: 0.75rem; font-weight: 650;
+}
+.tabcount.zero { background: var(--sand); color: var(--muted); }
+.tabrow { display: flex; align-items: flex-end; gap: 12px; margin: 0 0 16px; border-bottom: 1px solid var(--line); }
+.tabrow .tabs { flex: 1; margin: 0; border-bottom: 0; }
+.tabrow > .btn { flex: none; margin-bottom: 6px; }
+
+/* ---------- Side-by-side panels ---------- */
+.split { display: block; }
+@media (min-width: 900px) {
+  .split { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .split-side { position: sticky; top: 24px; }
+  .split-back { display: none; }
+}
+@media (max-width: 899px) {
+  .payslips-split:not(.has-sel) .split-main { display: none; }
+  .payslips-split.has-sel .split-side { display: none; }
+}
+.payslips-split .split-side h3 { margin-top: 0; }
+.payslips-split .rowbtn { border-radius: 8px; padding-left: 8px; padding-right: 8px; margin: 0 -8px; width: calc(100% + 16px); }
+.payslips-split .rowbtn:hover { background: var(--bg); }
+.payslips-split .rowbtn.on { background: var(--green-tint); }
+.payslips-split .rowbtn:focus-visible { box-shadow: var(--focus); }
+
+/* ---------- Account ---------- */
+.account .profile.card { margin-bottom: 12px; }
+.account .signout { margin: 0 0 16px; }
+.card-title { font-size: 1rem; margin: 0 0 4px; }
+.account .split-main form.card { max-width: 560px; }
+
+/* ---------- Home: two columns on desktop ---------- */
+@media (min-width: 1000px) {
+  .home {
+    display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); column-gap: 32px;
+    grid-template-areas: 'hello hello' 'todos todos' 'next week' 'next news';
+    align-items: start;
+  }
+  .home > .hello { grid-area: hello; }
+  .home > .todos { grid-area: todos; margin-bottom: 4px; }
+  .home > .block-next { grid-area: next; }
+  .home > .block-week { grid-area: week; }
+  .home > .block-news { grid-area: news; }
+  .home > .block, .home > .block:first-of-type { margin-top: 20px; }
+}
+
+/* ---------- Lists that would otherwise stretch thin across the frame ---------- */
+.cardgrid { display: grid; gap: 12px; }
+.cardgrid > * { margin: 0; }
+@media (min-width: 900px) { .cardgrid { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); align-items: start; } }
+@media (min-width: 1100px) {
+  .peoplelist { display: grid; grid-template-columns: 1fr 1fr; column-gap: 32px; }
+  .peoplelist > li, .peoplelist > li:last-child { border-bottom: 1px solid var(--line); }
+}
+
+/* Inbox: tabs in the main column; who's unavailable stays in the side column */
+.inbox-main > .tabs { margin-top: 2px; }
+.tabrow-note { flex: 1; padding: 0 0 12px; }
+/* the tab already names the section, so its own heading is kept for screen readers only */
+.inbox-main .tabpanel > .inbox-sec > .sec-head {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}

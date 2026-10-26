@@ -1,0 +1,23 @@
+/* Add/edit shift popover and the shift preview chips on the rota grid.
+   Kept in its own file so it doesn't collide with the redesign's edits to base.css / app.css. */
+
+/* who and which day: taken from the square that was tapped, shown as plain text */
+.shift-context { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 8px 10px; border-radius: 10px; background: #f6f5f1; font-size: 0.92rem; line-height: 1.35; }
+.shift-context-who { font-weight: 700; color: var(--ink, #222); }
+.shift-context-day { color: var(--muted, #666); }
+.shift-context .linkish { margin-left: auto; border: 0; background: none; padding: 6px 2px; min-height: 32px; font: inherit; font-size: 0.85rem; color: var(--green, #1f3a2e); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.shift-context .linkish:focus-visible { outline: 2px solid var(--gold, #b8893b); outline-offset: 2px; border-radius: 4px; }
+
+/* Shift leader toggle: a real checkbox with a gold star beside its label */
+.leader-toggle { gap: 8px; min-height: 44px; cursor: pointer; }
+.leader-toggle input { width: 20px; height: 20px; accent-color: #a8751f; flex: none; }
+.leader-toggle .leader-star { color: #c99a2e; font-size: 1.15rem; line-height: 1; }
+.leader-toggle input:not(:checked) + .leader-star { color: #c9c4b6; }
+
+/* shift chip on the grid: times (+ star), position/area, paid hours */
+.chip .chip-times { display: flex; align-items: center; justify-content: space-between; gap: 4px; font-weight: 600; white-space: nowrap; }
+.chip .chip-next { font-weight: 400; font-size: 0.75rem; opacity: 0.85; }
+.chip .chip-star { color: #f2c75c; font-size: 0.95rem; line-height: 1; flex: none; }
+.chip.draft .chip-star, .chip.openchip .chip-star { color: #a8751f; }
+.chip .chip-area { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip .chip-hours { font-variant-numeric: tabular-nums; }
