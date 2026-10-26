@@ -217,7 +217,7 @@ async function emailStaff(uids, subject, text) {
 
 // ---------------------------------------------------------------- staff accounts
 exports.createStaff = onCall(MAIL, async (req) => {
-  requireOwner(req, 'Only owners can add or change staff.');
+  requireOwner(req, 'Only management can add or change staff.');
   const d = req.data || {};
   const name = clean(d.name, 80);
   const email = clean(d.email, 150).toLowerCase();
@@ -261,7 +261,7 @@ exports.createStaff = onCall(MAIL, async (req) => {
 });
 
 exports.updateStaff = onCall(async (req) => {
-  requireOwner(req, 'Only owners can add or change staff.');
+  requireOwner(req, 'Only management can add or change staff.');
   const d = req.data || {};
   const uid = clean(d.uid, 128);
   if (!uid) throw new HttpsError('invalid-argument', 'Missing staff member.');
@@ -330,7 +330,7 @@ exports.updateStaff = onCall(async (req) => {
 // Removed: their login, future shifts, pending requests, unavailability and notifications, phone number.
 // Kept (payroll/legal records): name, email, role, leaving date, past shifts and payslips.
 exports.deleteStaff = onCall(async (req) => {
-  requireOwner(req, 'Only owners can remove staff.');
+  requireOwner(req, 'Only management can remove staff.');
   const uid = clean((req.data || {}).uid, 128);
   if (!uid) throw new HttpsError('invalid-argument', 'Missing staff member.');
   if (uid === req.auth.uid) throw new HttpsError('failed-precondition', 'You cannot remove your own login.');
@@ -389,7 +389,7 @@ async function publishDrafts(req, weekStart, approve) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || mondayOf(weekStart) !== weekStart) throw new HttpsError('invalid-argument', 'Bad week.');
   const status = await weekStatus(weekStart);
   if (status === 'approved' && callerRole(req) !== 'owner') {
-    throw new HttpsError('failed-precondition', 'This week has been approved and finalised. Only the owner can change it.');
+    throw new HttpsError('failed-precondition', 'This week has been approved and finalised. Only management can change it.');
   }
   const weekEnd = addDays(weekStart, 6);
   const snap = await db.collection('shifts').where('date', '>=', weekStart).where('date', '<=', weekEnd).get();
@@ -480,10 +480,10 @@ exports.decideRequest = onCall(async (req) => {
     if (!sh.exists) throw new HttpsError('failed-precondition', 'That shift has been deleted, so there is nothing to swap.');
     const wk = sh.get('week') || mondayOf(sh.get('date'));
     if ((await weekStatus(wk)) === 'approved' && callerRole(req) !== 'owner') {
-      throw new HttpsError('failed-precondition', 'That week is finalised. Only the owner can change it.');
+      throw new HttpsError('failed-precondition', 'That week is finalised. Only management can change it.');
     }
     if (callerRole(req) !== 'owner' && (await dayApproval.dayApproved(sh.get('date')))) {
-      throw new HttpsError('failed-precondition', `${prettyDate(sh.get('date'))} has been approved. Only the owner can change its shifts.`);
+      throw new HttpsError('failed-precondition', `${prettyDate(sh.get('date'))} has been approved. Only management can change its shifts.`);
     }
     let toName = 'Open shift';
     if (r.toStaffId) {

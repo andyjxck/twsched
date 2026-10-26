@@ -19,7 +19,7 @@ function db() { return admin.firestore(); }
 function role(req) { return (req.auth && req.auth.token && req.auth.token.role) || ''; }
 function requireManager(req) {
   if (!req.auth) throw new HttpsError('unauthenticated', 'Please sign in.');
-  if (!['owner', 'manager'].includes(role(req))) throw new HttpsError('permission-denied', 'Only managers and the owner can approve rota days.');
+  if (!['owner', 'manager'].includes(role(req))) throw new HttpsError('permission-denied', 'Only management can approve rota days.');
 }
 function validYmd(s) {
   if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
@@ -60,7 +60,7 @@ function makeFunctions({ notify, emailStaff, MAIL }) {
     if (!isOwner) {
       const w = await db().doc(`weeks/${week}`).get();
       if (w.exists && w.get('status') === 'approved') {
-        throw new HttpsError('failed-precondition', 'This whole week is already approved. Only the owner can change it.');
+        throw new HttpsError('failed-precondition', 'This whole week is already approved. Only management can change it.');
       }
     }
     const name = await callerName(req);
@@ -112,11 +112,11 @@ function makeFunctions({ notify, emailStaff, MAIL }) {
       const now = Date.now();
       if (!isOwner) {
         if (cur.get('approvedBy') !== uid) {
-          throw new HttpsError('permission-denied', `Only ${cur.get('approvedByName') || 'the person who approved it'} can undo this, within 5 minutes. After that only the owner can unlock it.`);
+          throw new HttpsError('permission-denied', `Only ${cur.get('approvedByName') || 'the person who approved it'} can undo this, within 5 minutes. After that only management can unlock it.`);
         }
         const until = cur.get('graceUntil');
         if (!until || now >= until.toMillis()) {
-          throw new HttpsError('permission-denied', 'The 5 minutes to undo this have passed, so the day is locked for good. Only the owner can unlock it.');
+          throw new HttpsError('permission-denied', 'The 5 minutes to undo this have passed, so the day is locked for good. Only management can unlock it.');
         }
       }
       t.update(ref, {

@@ -283,7 +283,7 @@ function makeFunctions({ sendMail, mailSettings, mailReady, MAIL, staffName, cle
     if (!req.auth) throw new HttpsError('unauthenticated', 'Please sign in.');
     const role = req.auth.token.role || '';
     // Owners only (Andy, 26 Oct): managers can't send logins or temporary passwords.
-    if (role !== 'owner') throw new HttpsError('permission-denied', 'Only owners can send logins or temporary passwords.');
+    if (role !== 'owner') throw new HttpsError('permission-denied', 'Only management can send logins or temporary passwords.');
     const uid = clean((req.data || {}).uid, 128);
     if (!uid) throw new HttpsError('invalid-argument', 'Missing staff member.');
     if (uid === req.auth.uid) throw new HttpsError('failed-precondition', 'Change your own password under Account › Change password.');
