@@ -46,7 +46,7 @@ const SMTP_PASS = defineSecret('SMTP_PASS');
 const MAIL = { secrets: [SMTP_PASS] };
 
 const SITE_URL = 'https://andyjxck.github.io/wshenley/';
-const { APP_URL } = require('./siteConfig'); // https://tws-rota.co.uk/ (shared with onboarding.js and passwordReset.js)
+const { APP_URL, APP_ORIGINS, LOCAL_ORIGIN } = require('./siteConfig'); // https://tws-rota.co.uk/ (shared with onboarding.js and passwordReset.js)
 // User types (Andy, 21 Oct): owner, manager, payroll (payroll tools only, not on the rota), staff (team member).
 const ROLES = ['owner', 'manager', 'payroll', 'staff'];
 // What a Manager may do with team logins. Change a value here (and redeploy) to adjust the Manager user type.
@@ -622,7 +622,8 @@ const HOUR = 3600000;
 const DAY = 24 * HOUR;
 
 exports.submitEnquiry = onCall({
-  cors: ['https://andyjxck.github.io', /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/],
+  // andyjxck.github.io stays: the hotel website (SITE_URL, andyjxck.github.io/wshenley) sends its enquiry form here.
+  cors: ['https://andyjxck.github.io', ...APP_ORIGINS, LOCAL_ORIGIN],
   maxInstances: 2,
   timeoutSeconds: 20,
   invoker: 'public',
