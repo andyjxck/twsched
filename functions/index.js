@@ -49,16 +49,13 @@ const SITE_URL = 'https://andyjxck.github.io/wshenley/';
 const { APP_URL, APP_ORIGINS, LOCAL_ORIGIN } = require('./siteConfig'); // https://tws-rota.co.uk/ (shared with onboarding.js and passwordReset.js)
 // User types (Andy, 21 Oct): owner, manager, payroll (payroll tools only, not on the rota), staff (team member).
 const ROLES = ['owner', 'manager', 'payroll', 'staff'];
-// What a Manager may do with team logins. Change a value here (and redeploy) to adjust the Manager user type.
-// Managers never change user types or touch payroll settings/payslips (see firestore.rules for those).
-const MANAGER_CAN = {
-  addTeamMembers: true,   // add new people as Team members (never as manager/payroll/owner)
-  editTeamMembers: true,  // edit a team member's name, job title and phone, resend their login
-  removeStaff: true,      // Team > Has left (terminate) a team member (Andy, 26 Oct: managers handle team members).
-};
 // Permissions (Andy, 26 Oct): ANY owner can change anything - owners, managers, payroll and team
 // members: user types, logins, temporary passwords, switching logins on/off and removing people.
-// Managers handle team members (role 'staff') only, never owners, managers or payroll.
+// Managers run the rota and the day-to-day (shifts, events, time off, enquiries). They can NOT add,
+// edit or remove staff, send logins/temporary passwords, switch logins on/off or change roles, and
+// they can NOT create or edit payroll (hours sign-off, pay settings, rates, payslips, contracts).
+// They can still see the team (read-only) to build the rota. Enforced here and in firestore.rules /
+// storage.rules; the app hides those controls for managers.
 // There is no "main owner" any more. The primaryOwner claim below is a leftover label for Stella and
 // Tom and grants nothing extra anywhere (functions, firestore.rules, storage.rules or the app).
 const PRIMARY_OWNER_EMAILS = ['stellablizzard@gmail.com', 'thomas.meehan@hotmail.co.uk'];
@@ -102,6 +99,11 @@ function requireRole(req, roles) {
   if (!roles.includes(callerRole(req))) {
     throw new HttpsError('permission-denied', 'You do not have permission to do that.');
   }
+}
+// Staff accounts are owner-only (Andy, 26 Oct: "Managers CANNOT ADD STAFF. OR EDIT STAFF.").
+function requireOwner(req, message) {
+  if (!req.auth) throw new HttpsError('unauthenticated', 'Please sign in.');
+  if (callerRole(req) !== 'owner') throw new HttpsError('permission-denied', message);
 }
 function clean(v, max) {
   return typeof v === 'string' ? v.trim().slice(0, max) : '';
@@ -215,16 +217,13 @@ async function emailStaff(uids, subject, text) {
 
 // ---------------------------------------------------------------- staff accounts
 exports.createStaff = onCall(MAIL, async (req) => {
-  requireRole(req, MANAGER_CAN.addTeamMembers ? ['owner', 'manager'] : ['owner']);
+  requireOwner(req, 'Only owners can add or change staff.');
   const d = req.data || {};
   const name = clean(d.name, 80);
   const email = clean(d.email, 150).toLowerCase();
   const role = ROLES.includes(d.role) ? d.role : 'staff';
   if (name.length < 2) throw new HttpsError('invalid-argument', 'Enter a name.');
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !enquiry.isEmail(email)) throw new HttpsError('invalid-argument', 'Enter a valid email address.');
-  if (role !== 'staff' && callerRole(req) !== 'owner') {
-    throw new HttpsError('permission-denied', 'Only an owner can add managers, payroll or owners.');
-  }
   await onboardingFns.takeInviteSlot(req.auth.uid, null);
   let user;
   try {
@@ -262,7 +261,7 @@ exports.createStaff = onCall(MAIL, async (req) => {
 });
 
 exports.updateStaff = onCall(async (req) => {
-  requireRole(req, MANAGER_CAN.editTeamMembers ? ['owner', 'manager'] : ['owner']);
+  requireOwner(req, 'Only owners can add or change staff.');
   const d = req.data || {};
   const uid = clean(d.uid, 128);
   if (!uid) throw new HttpsError('invalid-argument', 'Missing staff member.');
@@ -270,10 +269,6 @@ exports.updateStaff = onCall(async (req) => {
   const snap = await ref.get();
   if (!snap.exists) throw new HttpsError('not-found', 'Staff member not found.');
   const current = snap.data();
-  const isOwner = callerRole(req) === 'owner';
-  if (!isOwner && current.role !== 'staff' && uid !== req.auth.uid) {
-    throw new HttpsError('permission-denied', 'Only an owner can change owners, managers or payroll logins.');
-  }
   const update = {};
   const authUpdate = {};
   if (d.name != null) {
@@ -289,7 +284,6 @@ exports.updateStaff = onCall(async (req) => {
   if (current.terminated) throw new HttpsError('failed-precondition', 'This person has left. Add them again as a new login if they come back.');
   if (d.role != null && d.role !== current.role) {
     if (!ROLES.includes(d.role)) throw new HttpsError('invalid-argument', 'Unknown role.');
-    if (!isOwner) throw new HttpsError('permission-denied', 'Only an owner can change user types.');
     if (uid === req.auth.uid) throw new HttpsError('failed-precondition', 'You cannot change your own role.');
     if (current.role === 'owner' && !(await anotherActiveOwner(uid))) {
       throw new HttpsError('failed-precondition', 'There has to be at least one owner. Make someone else an owner first.');
@@ -336,16 +330,13 @@ exports.updateStaff = onCall(async (req) => {
 // Removed: their login, future shifts, pending requests, unavailability and notifications, phone number.
 // Kept (payroll/legal records): name, email, role, leaving date, past shifts and payslips.
 exports.deleteStaff = onCall(async (req) => {
-  requireRole(req, MANAGER_CAN.removeStaff ? ['owner', 'manager'] : ['owner']);
+  requireOwner(req, 'Only owners can remove staff.');
   const uid = clean((req.data || {}).uid, 128);
   if (!uid) throw new HttpsError('invalid-argument', 'Missing staff member.');
   if (uid === req.auth.uid) throw new HttpsError('failed-precondition', 'You cannot remove your own login.');
   const ref = db.doc(`staff/${uid}`);
   const snap = await ref.get();
   const cur = snap.exists ? snap.data() : {};
-  if (callerRole(req) !== 'owner' && (!snap.exists || (cur.role || 'staff') !== 'staff')) {
-    throw new HttpsError('permission-denied', 'Only an owner can remove owners, managers or payroll logins.');
-  }
   if (cur.role === 'owner' && !(await anotherActiveOwner(uid))) {
     throw new HttpsError('failed-precondition', 'There has to be at least one owner. Make someone else an owner first.');
   }

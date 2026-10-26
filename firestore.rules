@@ -21,7 +21,7 @@ service cloud.firestore {
     function isMember() { return role() in ['owner', 'manager', 'staff', 'payroll']; } // anyone signed in to the hub
     // ---- Payroll permission map: change these to adjust what each user type can do with pay. ----
     function canSeeHours() { return role() in ['owner', 'manager', 'payroll']; }    // rota hours, pay periods, holiday
-    function canSignOffHours() { return role() in ['owner', 'manager']; }           // approve and lock hours
+    function canSignOffHours() { return role() == 'owner'; }                        // approve and lock hours (26 Oct: managers can't do payroll)
     function canPayroll() { return role() in ['owner', 'payroll']; }                // pay settings, rates, payslips
     function uid() { return request.auth.uid; }
     function data() { return request.resource.data; }
@@ -263,13 +263,10 @@ service cloud.firestore {
       return ct == 'application/pdf' ? 'pdf' : ct == 'image/jpeg' ? 'jpg' : ct == 'image/png' ? 'png'
         : ct == 'image/webp' ? 'webp' : ct == 'image/heic' ? 'heic' : '';
     }
-    function staffRoleOf(staffId) {
-      return get(/databases/$(database)/documents/staff/$(staffId)).data.get('role', '');
-    }
     function canAddRtwFor(staffId) {
       return staffId is string && staffId.size() > 0 && staffId.size() <= 128
         && exists(/databases/$(database)/documents/staff/$(staffId))
-        && (role() == 'owner' || (role() == 'manager' && staffId != uid() && staffRoleOf(staffId) == 'staff'));
+        && role() == 'owner';
     }
     function validStaffDoc(docId) {
       return onlyKeys(['staffId', 'staffName', 'kind', 'docType', 'fileName', 'contentType', 'size', 'storagePath',
@@ -286,7 +283,7 @@ service cloud.firestore {
     }
     match /staffDocs/{docId} {
       allow read: if role() == 'owner';
-      allow create: if (role() == 'owner' || role() == 'manager') && validStaffDoc(docId) && canAddRtwFor(data().staffId);
+      allow create: if role() == 'owner' && validStaffDoc(docId) && canAddRtwFor(data().staffId); // 26 Oct: owners only, managers can't edit staff
       allow delete: if role() == 'owner';
       allow update: if false;
     }

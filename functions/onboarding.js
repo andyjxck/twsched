@@ -282,7 +282,8 @@ function makeFunctions({ sendMail, mailSettings, mailReady, MAIL, staffName, cle
   const resendStaffLogin = gatedOnCall({ ...MAIL, timeoutSeconds: 60 }, async (req) => {
     if (!req.auth) throw new HttpsError('unauthenticated', 'Please sign in.');
     const role = req.auth.token.role || '';
-    if (!['owner', 'manager'].includes(role)) throw new HttpsError('permission-denied', 'You do not have permission to do that.');
+    // Owners only (Andy, 26 Oct): managers can't send logins or temporary passwords.
+    if (role !== 'owner') throw new HttpsError('permission-denied', 'Only owners can send logins or temporary passwords.');
     const uid = clean((req.data || {}).uid, 128);
     if (!uid) throw new HttpsError('invalid-argument', 'Missing staff member.');
     if (uid === req.auth.uid) throw new HttpsError('failed-precondition', 'Change your own password under Account › Change password.');
@@ -291,8 +292,6 @@ function makeFunctions({ sendMail, mailSettings, mailReady, MAIL, staffName, cle
     const p = snap.data();
     if (p.terminated) throw new HttpsError('failed-precondition', 'This person has left. Add them again as a new login if they come back.');
     if (p.active === false) throw new HttpsError('failed-precondition', 'Switch their login back on first.');
-    // Any owner can send anyone a new login; a manager only for team members (Andy, 26 Oct).
-    if (role !== 'owner' && (p.role || 'staff') !== 'staff') throw new HttpsError('permission-denied', 'Only an owner can send a new login to an owner, manager or payroll login.');
     let u;
     try {
       u = await auth().getUser(uid);

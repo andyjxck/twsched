@@ -3,8 +3,8 @@ rules_version = '2';
 // Payslip PDFs: payslips/{staffUid}/{payslipId}.pdf
 //   The owner and payroll users upload, replace and remove them; everyone else (managers too) can read only their own.
 // Right to Work: rtw/{staffUid}/{docId}.{pdf|jpg|png|webp|heic}
-//   Owner: upload, read, remove. Manager: upload only (cannot read, overwrite or remove), only for
-//   people with the staff role, never their own. Staff: nothing. See functions/documents.js.
+//   Owner: upload, read, remove. Managers and staff: nothing (26 Oct: managers can't edit staff).
+//   See functions/documents.js.
 service firebase.storage {
   match /b/{bucket}/o {
     // No role while the account still has to choose its first password (claim pwChange, or the
@@ -36,9 +36,7 @@ service firebase.storage {
       allow read, delete: if role() == 'owner';
       // create only: an existing file can never be overwritten (not even by the owner; remove + add instead)
       allow create: if resource == null
-        && (role() == 'owner'
-          || (role() == 'manager' && staffId != request.auth.uid
-              && firestore.get(/databases/(default)/documents/staff/$(staffId)).data.get('role', '') == 'staff'))
+        && role() == 'owner'
         && request.resource.contentType is string
         && rtwExt(request.resource.contentType) != ''
         && fileName.matches('^[A-Za-z0-9]{20}[.]' + rtwExt(request.resource.contentType) + '$')
