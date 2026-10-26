@@ -22,6 +22,7 @@ const logger = require('firebase-functions/logger');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const { callerIp, keyHash, isEmail } = require('./enquiry');
+const { APP_URL, APP_ORIGINS, LOCAL_ORIGIN } = require('./siteConfig');
 
 const API_KEY = 'AIzaSyDe67skrRZG6TcHFcDUI45zY6Az4Jn5Y2I'; // public web API key (already shipped in the app)
 const MIN = 60000;
@@ -92,7 +93,7 @@ async function sendResetEmail(email) {
   const base = emu ? `http://${emu}/identitytoolkit.googleapis.com` : 'https://identitytoolkit.googleapis.com';
   const r = await fetch(`${base}/v1/accounts:sendOobCode?key=${API_KEY}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Referer: 'https://andyjxck.github.io/twsched/' },
+    headers: { 'Content-Type': 'application/json', Referer: APP_URL },
     body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
   });
   if (r.ok) return { sent: true };
@@ -106,7 +107,7 @@ async function sendResetEmail(email) {
 }
 
 const requestPasswordReset = onCall({
-  cors: ['https://andyjxck.github.io', /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/],
+  cors: [...APP_ORIGINS, LOCAL_ORIGIN], // tws-rota.co.uk + Firebase Hosting addresses, and local dev
   maxInstances: 2,
   timeoutSeconds: 20,
   invoker: 'public',

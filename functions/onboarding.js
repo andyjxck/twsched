@@ -35,7 +35,7 @@ const crypto = require('crypto');
 const { FieldValue, Timestamp } = require('firebase-admin/firestore');
 
 const API_KEY = 'AIzaSyDe67skrRZG6TcHFcDUI45zY6Az4Jn5Y2I'; // public web API key (already shipped in the app)
-const APP_URL = 'https://andyjxck.github.io/twsched/';
+const { APP_URL } = require('./siteConfig'); // the live staff app (was the old GitHub Pages address, now a 404)
 const CLAIM = 'pwChange';
 const GATE = 'authGate';
 const MIN = 60000;

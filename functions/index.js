@@ -46,7 +46,7 @@ const SMTP_PASS = defineSecret('SMTP_PASS');
 const MAIL = { secrets: [SMTP_PASS] };
 
 const SITE_URL = 'https://andyjxck.github.io/wshenley/';
-const APP_URL = 'https://tws-rota.co.uk/';
+const { APP_URL } = require('./siteConfig'); // https://tws-rota.co.uk/ (shared with onboarding.js and passwordReset.js)
 // User types (Andy, 21 Oct): owner, manager, payroll (payroll tools only, not on the rota), staff (team member).
 const ROLES = ['owner', 'manager', 'payroll', 'staff'];
 // What a Manager may do with team logins. Change a value here (and redeploy) to adjust the Manager user type.
