@@ -1,0 +1,54 @@
+rules_version = '2';
+
+// Payslip PDFs: payslips/{staffUid}/{payslipId}.pdf
+//   The owner and payroll users upload, replace and remove them; everyone else (managers too) can read only their own.
+// Right to Work: rtw/{staffUid}/{docId}.{pdf|jpg|png|webp|heic}
+//   Owner: upload, read, remove. Manager: upload only (cannot read, overwrite or remove), only for
+//   people with the staff role, never their own. Staff: nothing. See functions/documents.js.
+service firebase.storage {
+  match /b/{bucket}/o {
+    // No role while the account still has to choose its first password (claim pwChange, or the
+    // server-only marker authGate/{uid} in Firestore, which also catches older tokens). See onboarding.js.
+    function gateClear() {
+      return request.auth.token.get('pwChange', false) != true
+        && !firestore.exists(/databases/(default)/documents/authGate/$(request.auth.uid));
+    }
+    function role() { return request.auth != null && gateClear() ? request.auth.token.get('role', '') : ''; }
+    function isManager() { return role() in ['owner', 'manager']; }
+    function isStaff() { return role() in ['owner', 'manager', 'staff']; }
+    function canPayroll() { return role() in ['owner', 'payroll']; }
+
+    match /payslips/{staffId}/{fileName} {
+      allow read: if canPayroll() || (isStaff() && request.auth.uid == staffId);
+      allow create, update: if canPayroll()
+        && fileName.matches('^[A-Za-z0-9_-]+\\.pdf$')
+        && request.resource.contentType == 'application/pdf'
+        && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024;
+      allow delete: if canPayroll();
+    }
+
+    function rtwExt(ct) {
+      return ct == 'application/pdf' ? 'pdf' : ct == 'image/jpeg' ? 'jpg' : ct == 'image/png' ? 'png'
+        : ct == 'image/webp' ? 'webp' : ct == 'image/heic' ? 'heic' : '';
+    }
+    match /rtw/{staffId}/{fileName} {
+      allow read, delete: if role() == 'owner';
+      // create only: an existing file can never be overwritten (not even by the owner; remove + add instead)
+      allow create: if resource == null
+        && (role() == 'owner'
+          || (role() == 'manager' && staffId != request.auth.uid
+              && firestore.get(/databases/(default)/documents/staff/$(staffId)).data.get('role', '') == 'staff'))
+        && request.resource.contentType is string
+        && rtwExt(request.resource.contentType) != ''
+        && fileName.matches('^[A-Za-z0-9]{20}[.]' + rtwExt(request.resource.contentType) + '$')
+        && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024;
+      allow update: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

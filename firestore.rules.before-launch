@@ -1,0 +1,443 @@
+rules_version = '2';
+
+// White Swan staff app + public website.
+// Roles live in Firebase Auth custom claims (token.role), set only by Cloud Functions:
+//   owner   - everything, incl. managers and mail settings
+//   manager - rota, events, payslips, enquiries, team (staff role only)
+//   staff   - own published shifts / payslips / time off / requests, events
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    // An account that still has to choose its first password (temporary password sent from Team, see
+    // functions/onboarding.js) has no role at all until it does: custom claim pwChange, set and cleared
+    // only by Cloud Functions. Deliberately a token-only check: an exists() here is evaluated on every
+    // role() call and pushed the shift rules over Firestore's 1000-expression limit. Callables and
+    // Storage additionally check the authGate/{uid} marker for tokens minted before a reset.
+    function role() { return signedIn() && request.auth.token.get('pwChange', false) != true ? request.auth.token.get('role', '') : ''; }
+    // User types: owner (everything), manager, payroll (payroll tools only, not on the rota), staff (team member).
+    function isStaff() { return role() in ['owner', 'manager', 'staff']; }   // people on the rota
+    function isManager() { return role() in ['owner', 'manager']; }
+    function isMember() { return role() in ['owner', 'manager', 'staff', 'payroll']; } // anyone signed in to the hub
+    // ---- Payroll permission map: change these to adjust what each user type can do with pay. ----
+    function canSeeHours() { return role() in ['owner', 'manager', 'payroll']; }    // rota hours, pay periods, holiday
+    function canSignOffHours() { return role() in ['owner', 'manager']; }           // approve and lock hours
+    function canPayroll() { return role() in ['owner', 'payroll']; }                // pay settings, rates, payslips
+    function uid() { return request.auth.uid; }
+    function data() { return request.resource.data; }
+    function onlyKeys(keys) { return data().keys().hasOnly(keys); }
+    function changedOnly(keys) {
+      return data().diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+    function isDate(v) { return v is string && v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
+    function isTime(v) { return v is string && v.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$'); }
+    function str(v, max) { return v is string && v.size() <= max; }
+    function optStr(field, max) { return !(field in data()) || str(data()[field], max); }
+
+    // ---------- Staff directory (written only by Cloud Functions) ----------
+    match /staff/{staffId} {
+      allow read: if isMember();
+      allow create, update: if false;
+      // Team > Left > Delete (Andy, 21 Oct): an owner can delete the record of someone who has already
+      // left (terminated by the deleteStaff function, which also removed their login). Never Andy's own
+      // primary record, never your own, and only Andy can delete another owner's record (same rule as
+      // deleteStaff). Shifts, payslips, time off and requests each keep their own staffName, nothing
+      // cascades, so history stays intact; Right to Work files are kept (legal retention).
+      allow delete: if role() == 'owner' && staffId != uid()
+        && resource.data.get('terminated', false) == true
+        && resource.data.get('primaryOwner', false) != true
+        && (resource.data.get('role', 'staff') != 'owner' || isPrimaryOwnerToken());
+    }
+    function isPrimaryOwnerToken() {
+      return request.auth.token.get('primaryOwner', false) == true
+        && request.auth.token.get('email', '').lower() == 'andyblewett9@gmail.com';
+    }
+
+    // ---------- Rota shifts ----------
+    // staffId '' = open shift. Overnight shifts have end <= start (finish next day).
+    // week = Monday of the shift's date; used to check whether that week is approved (locked).
+    function dayTs(d) { return timestamp.date(int(d[0:4]), int(d[5:7]), int(d[8:10])); }
+    function validWeekFor(week, date) {
+      return isDate(week) && dayTs(week).dayOfWeek() == 1
+        && dayTs(date) >= dayTs(week) && dayTs(date) < dayTs(week) + duration.value(7, 'd');
+    }
+    function weekLocked(week) {
+      return exists(/databases/$(database)/documents/weeks/$(week))
+        && get(/databases/$(database)/documents/weeks/$(week)).data.get('status', '') == 'approved';
+    }
+    function canEditWeek(week) { return role() == 'owner' || !weekLocked(week); }
+    // Single-day approval: days/{YYYY-MM-DD} (calendar date of the shift, UK rota day) with status 'approved'.
+    // Once a day is approved only the owner can create, change, move into/out of, or delete its shifts.
+    function dayLocked(d) {
+      return isDate(d)
+        && exists(/databases/$(database)/documents/days/$(d))
+        && get(/databases/$(database)/documents/days/$(d)).data.get('status', '') == 'approved';
+    }
+    // A shift can be changed by a non-owner only if neither its week nor its own day is approved.
+    function canEditShiftOn(week, date) {
+      return role() == 'owner' || (!weekLocked(week) && !dayLocked(date));
+    }
+    function optTime(field) { return !(field in data()) || data()[field] == '' || isTime(data()[field]); }
+    function validShift() {
+      return onlyKeys(['staffId', 'staffName', 'date', 'week', 'start', 'end', 'breakStart', 'breakEnd', 'breakPaid', 'leader',
+                       'area', 'notes', 'eventId', 'eventTitle', 'published', 'updatedAt', 'updatedBy'])
+        && data().staffId is string && data().staffId.size() <= 128
+        && str(data().staffName, 80)
+        && isDate(data().date) && isTime(data().start) && isTime(data().end)
+        && validWeekFor(data().week, data().date)
+        && optTime('breakStart') && optTime('breakEnd')
+        && (!('breakPaid' in data()) || data().breakPaid is bool)
+        && (!('leader' in data()) || data().leader is bool)
+        && optStr('area', 40) && optStr('notes', 300)
+        && optStr('eventId', 60) && optStr('eventTitle', 120)
+        && data().published is bool
+        && data().updatedAt == request.time
+        && data().updatedBy == uid();
+    }
+    // Availability (Andy, 20 Oct): nobody, the owner included, can be put on a shift on a day they are
+    // unavailable or on approved holiday. rotaBlocks/{staffId}_{YYYY}.d holds those UK days; it is
+    // built only by Cloud Functions from unavailability + approved timeOff (see functions/availability.js).
+    // A shift that runs past midnight (end <= start, end not 00:00) must also be clear of the next day.
+    function blockRef(staffId, d) { return /databases/$(database)/documents/rotaBlocks/$(staffId + '_' + d[0:4]); }
+    function blockedOn(staffId, d) {
+      return exists(blockRef(staffId, d)) && d in get(blockRef(staffId, d)).data.get('d', {});
+    }
+    function pad2(n) { return n < 10 ? '0' + string(n) : string(n); }
+    function nextDate(d) {
+      let t = dayTs(d) + duration.value(1, 'd');
+      return string(t.year()) + '-' + pad2(t.month()) + '-' + pad2(t.day());
+    }
+    function spillsOver(s) { return s.end <= s.start && s.end != '00:00'; }
+    function freeFor(s) {
+      return s.staffId == ''
+        || (!blockedOn(s.staffId, s.date) && !(spillsOver(s) && blockedOn(s.staffId, nextDate(s.date))));
+    }
+    // person, day or times changed: the result must be clear of unavailability/holiday. Other edits
+    // (notes, breaks, area, publishing) to a shift that already clashed are still allowed, so nothing is lost.
+    function assignmentChanged() {
+      return data().staffId != resource.data.get('staffId', '') || data().date != resource.data.get('date', '')
+        || data().start != resource.data.get('start', '') || data().end != resource.data.get('end', '');
+    }
+    match /rotaBlocks/{blockId} {
+      allow read: if isManager() || (isStaff() && resource.data.staffId == uid());
+      allow write: if false;
+    }
+
+    // Right to Work (Andy, 20 Oct): nobody can be put on a shift until a checked RTW document is on file.
+    // rtwStatus/{staffId}.ok is written only by Cloud Functions (functions/documents.js) after it has
+    // verified the uploaded file. Open shifts (staffId '') need nothing. Edits that keep the same person
+    // on an existing shift are not new assignments and stay allowed.
+    function hasRtw(staffId) {
+      return exists(/databases/$(database)/documents/rtwStatus/$(staffId))
+        && get(/databases/$(database)/documents/rtwStatus/$(staffId)).data.get('ok', false) == true;
+    }
+    function rtwOkFor(s) { return s.staffId == '' || hasRtw(s.staffId); }
+    match /shifts/{shiftId} {
+      // team members only ever see their own published shifts, never the full rota
+      allow read: if canSeeHours()
+        || (isStaff() && resource.data.published == true && resource.data.staffId == uid());
+      allow create: if isManager() && validShift() && canEditShiftOn(data().week, data().date) && freeFor(data())
+        && rtwOkFor(data());
+      // both the old (source) and new (target) week and day must be editable, so a shift can't be
+      // moved into or out of an approved day by anyone but the owner
+      allow update: if isManager() && validShift() && canEditShiftOn(data().week, data().date)
+        && canEditShiftOn(resource.data.get('week', data().week), resource.data.get('date', data().date))
+        && (!assignmentChanged() || freeFor(data()))
+        && (data().staffId == resource.data.get('staffId', '') || rtwOkFor(data()));
+      allow delete: if isManager()
+        && canEditShiftOn(resource.data.get('week', ''), resource.data.get('date', ''));
+    }
+
+    // Day approval (tick on each rota day). Written only by Cloud Functions (approveDay / unapproveDay),
+    // which record who approved it and when, and allow the approver to undo it for 5 minutes;
+    // after that only the owner can unlock the day.
+    match /days/{dayId} {
+      allow read: if isMember();
+      allow write: if false;
+    }
+
+    // Week status (published / approved). Written only by Cloud Functions (publishWeek / approveWeek).
+    match /weeks/{weekId} {
+      allow read: if isMember();
+      allow write: if false;
+    }
+
+    // ---------- Unavailability (shown greyed out on the rota with the reason) ----------
+    // weekday 0 = every day in the range, 1..7 = only that weekday (Mon..Sun) within the range.
+    match /unavailability/{id} {
+      allow read: if isManager() || (isStaff() && resource.data.staffId == uid());
+      allow create: if isStaff()
+        && onlyKeys(['staffId', 'staffName', 'from', 'to', 'weekday', 'reason', 'createdAt', 'createdBy'])
+        && (data().staffId == uid() || isManager())
+        && data().staffId is string && data().staffId.size() > 0 && str(data().staffName, 80)
+        && isDate(data().from) && isDate(data().to) && data().to >= data().from
+        && data().weekday is int && data().weekday >= 0 && data().weekday <= 7
+        && str(data().reason, 200) && data().reason.size() > 0
+        && data().createdAt == request.time && data().createdBy == uid();
+      allow delete: if isManager() || (isStaff() && resource.data.staffId == uid());
+      allow update: if false;
+    }
+
+    // ---------- Shift swaps and problem reports (decided via the decideRequest function) ----------
+    match /requests/{id} {
+      allow read: if canSeeHours() || (isStaff() && resource.data.staffId == uid());
+      allow create: if isStaff()
+        && onlyKeys(['kind', 'staffId', 'staffName', 'shiftId', 'shiftLabel', 'shiftDate', 'toStaffId',
+                     'toStaffName', 'message', 'status', 'createdAt'])
+        && data().kind in ['swap', 'problem']
+        && data().staffId == uid() && str(data().staffName, 80)
+        && str(data().shiftId, 128) && data().shiftId.size() > 0
+        && get(/databases/$(database)/documents/shifts/$(data().shiftId)).data.staffId == uid()
+        && str(data().shiftLabel, 120) && isDate(data().shiftDate)
+        && optStr('toStaffId', 128) && optStr('toStaffName', 80) && optStr('message', 500)
+        && data().status == 'pending' && data().createdAt == request.time;
+      allow update: if isStaff() && resource.data.staffId == uid() && resource.data.status == 'pending'
+        && changedOnly(['status']) && data().status == 'cancelled';
+      allow delete: if isManager();
+    }
+
+    // ---------- Events (public ones feed the hotel website) ----------
+    function validEvent() {
+      return onlyKeys(['title', 'date', 'start', 'end', 'description', 'room', 'repeat',
+                       'onWebsite', 'staffNeeded', 'updatedAt', 'updatedBy'])
+        && str(data().title, 120) && data().title.size() > 0
+        && isDate(data().date)
+        && (!('start' in data()) || data().start == '' || isTime(data().start))
+        && (!('end' in data()) || data().end == '' || isTime(data().end))
+        && optStr('description', 600) && optStr('room', 60)
+        && (!('repeat' in data()) || data().repeat in ['none', 'weekly'])
+        && data().onWebsite is bool
+        && (!('staffNeeded' in data()) || (data().staffNeeded is int && data().staffNeeded >= 0 && data().staffNeeded <= 50))
+        && data().updatedAt == request.time
+        && data().updatedBy == uid();
+    }
+    match /events/{eventId} {
+      allow read: if isStaff() || resource.data.onWebsite == true;
+      allow create, update: if isManager() && validEvent();
+      allow delete: if isManager();
+    }
+
+    // Denormalised public feed, rebuilt by Cloud Functions.
+    match /public/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ---------- Payslips (file itself lives in Storage) ----------
+    // Filed by UK tax month: id = staffId + '_' + slot, slot = '<tax year start>-<tax month 01..12>'.
+    // Weekly/fortnightly/four-weekly pay can have several in one tax month: id = staffId_slot_payDate.
+    // 21 Oct: the owner and payroll users upload, replace or remove payslips; silent = no notification.
+    // Everyone else, managers included, can read only their own.
+    function notOwnUnlessOwner(staffId) { return staffId != uid() || role() == 'owner'; }
+    function validPayslip(payslipId) {
+      return onlyKeys(['staffId', 'staffName', 'period', 'slot', 'taxYear', 'taxMonth', 'payDate', 'fileName',
+                       'storagePath', 'size', 'uploadedAt', 'uploadedBy', 'uploadedByName', 'silent'])
+        && data().staffId is string && data().staffId.size() > 0
+        && str(data().staffName, 80) && str(data().period, 60) && data().period.size() > 0
+        && data().slot is string && data().slot.matches('^[0-9]{4}-(0[1-9]|1[0-2])$')
+        && (payslipId == data().staffId + '_' + data().slot
+            || (isDate(data().get('payDate', '')) && payslipId == data().staffId + '_' + data().slot + '_' + data().payDate))
+        && (!('silent' in data()) || data().silent is bool)
+        && data().taxYear is int && data().taxMonth is int && data().taxMonth >= 1 && data().taxMonth <= 12
+        && (!('payDate' in data()) || data().payDate == '' || isDate(data().payDate))
+        && str(data().fileName, 200) && optStr('uploadedByName', 80)
+        && data().storagePath == 'payslips/' + data().staffId + '/' + payslipId + '.pdf'
+        && data().size is int && data().size > 0 && data().size <= 10 * 1024 * 1024
+        && data().uploadedAt == request.time && data().uploadedBy == uid();
+    }
+    match /payslips/{payslipId} {
+      allow read: if canPayroll() || (isStaff() && resource.data.staffId == uid());
+      allow create: if canPayroll() && validPayslip(payslipId);
+      allow delete: if canPayroll();
+      allow update: if false;
+    }
+
+    // ---------- Right to Work documents (file itself lives in Storage: rtw/{staffId}/{docId}.{ext}) ----------
+    // Sensitive identity documents. Owner: upload, see, remove anyone's. Manager: upload only (write-only),
+    // only for people with the staff role, never their own, and can never read or remove them.
+    // Staff: nothing, not even their own. Every upload is re-checked by functions/documents.js (real file of
+    // the stated type, sizes match, download token removed) before it counts in rtwStatus.
+    function rtwExt(ct) {
+      return ct == 'application/pdf' ? 'pdf' : ct == 'image/jpeg' ? 'jpg' : ct == 'image/png' ? 'png'
+        : ct == 'image/webp' ? 'webp' : ct == 'image/heic' ? 'heic' : '';
+    }
+    function staffRoleOf(staffId) {
+      return get(/databases/$(database)/documents/staff/$(staffId)).data.get('role', '');
+    }
+    function canAddRtwFor(staffId) {
+      return staffId is string && staffId.size() > 0 && staffId.size() <= 128
+        && exists(/databases/$(database)/documents/staff/$(staffId))
+        && (role() == 'owner' || (role() == 'manager' && staffId != uid() && staffRoleOf(staffId) == 'staff'));
+    }
+    function validStaffDoc(docId) {
+      return onlyKeys(['staffId', 'staffName', 'kind', 'docType', 'fileName', 'contentType', 'size', 'storagePath',
+                       'uploadedAt', 'uploadedBy', 'uploadedByName'])
+        && data().kind == 'rtw'
+        && data().docType in ['passport', 'brp', 'share_code', 'birth_certificate', 'visa', 'other']
+        && str(data().staffName, 80) && str(data().fileName, 200) && data().fileName.size() > 0
+        && data().contentType is string && rtwExt(data().contentType) != ''
+        && data().size is int && data().size > 0 && data().size <= 10 * 1024 * 1024
+        && docId.matches('^[A-Za-z0-9]{20}$')
+        && data().storagePath == 'rtw/' + data().staffId + '/' + docId + '.' + rtwExt(data().contentType)
+        && optStr('uploadedByName', 80)
+        && data().uploadedAt == request.time && data().uploadedBy == uid();
+    }
+    match /staffDocs/{docId} {
+      allow read: if role() == 'owner';
+      allow create: if (role() == 'owner' || role() == 'manager') && validStaffDoc(docId) && canAddRtwFor(data().staffId);
+      allow delete: if role() == 'owner';
+      allow update: if false;
+    }
+    // Tick only (ok / count), no document details. Written only by Cloud Functions.
+    match /rtwStatus/{staffId} {
+      allow read: if isManager();
+      allow write: if false;
+    }
+
+    // ---------- Time off / holiday (paid or unpaid) ----------
+    match /timeOff/{reqId} {
+      allow read: if canSeeHours() || (isStaff() && resource.data.staffId == uid());
+      allow create: if isStaff()
+        && onlyKeys(['staffId', 'staffName', 'from', 'to', 'reason', 'paid', 'status', 'createdAt'])
+        && data().staffId == uid() && str(data().staffName, 80)
+        && isDate(data().from) && isDate(data().to) && data().to >= data().from
+        && optStr('reason', 300) && data().paid is bool
+        && data().status == 'pending' && data().createdAt == request.time;
+      // decisions go through the decideRequest function (records who decided);
+      // staff can cancel their own pending request
+      allow update: if isStaff() && resource.data.staffId == uid() && resource.data.status == 'pending'
+          && changedOnly(['status']) && data().status == 'cancelled';
+      allow delete: if isManager();
+    }
+
+    // ---------- Private hire enquiries from the public website ----------
+    // Created only by the submitEnquiry Cloud Function (server-side validation + rate limits).
+    // Visitors cannot write here directly.
+    match /enquiries/{enquiryId} {
+      allow create: if false;
+      allow read, delete: if isManager();
+      allow update: if isManager() && changedOnly(['status', 'handledBy', 'handledAt', 'staffNote'])
+        && data().status in ['new', 'replied', 'booked', 'closed'];
+    }
+
+    // ---------- In-app notifications (created by Cloud Functions) ----------
+    match /notifications/{noteId} {
+      allow read: if isMember() && resource.data.uid == uid();
+      allow update: if isMember() && resource.data.uid == uid()
+        && changedOnly(['read']) && data().read is bool;
+      allow delete: if isMember() && resource.data.uid == uid();
+      allow create: if false;
+    }
+
+    // First-login marker (onboarding.js). Written only by Cloud Functions; the account itself may read
+    // its own (no secrets in it: reason, who, when it was issued and when it expires).
+    match /authGate/{userId} {
+      allow read: if signedIn() && userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Mail settings and other server-only data.
+    match /private/{docId} {
+      allow read, write: if false;
+    }
+
+    // Enquiry rate-limit counters (Cloud Functions only).
+    match /rateLimits/{docId} {
+      allow read, write: if false;
+    }
+
+    // ---------- Payroll (21 Oct) ----------
+    function num(v, lo, hi) { return (v is int || v is float) && v >= lo && v <= hi; }
+    function optNum(field, lo, hi) { return !(field in data()) || data()[field] == null || num(data()[field], lo, hi); }
+    function stamped() { return data().updatedAt == request.time && data().updatedBy == uid(); }
+    // Pay calendar settings: everyone signed in sees the dates; only owner/payroll change them.
+    match /payroll/{docId} {
+      allow read: if isMember();
+      allow create, update: if canPayroll() && docId == 'settings'
+        && onlyKeys(['anchor', 'frequency', 'cutoffOffset', 'payDateOffset', 'reminderDays', 'holidayYearStart',
+                     'overtimeMultiplier', 'accrualRate', 'exportColumns', 'updatedAt', 'updatedBy'])
+        && isDate(data().anchor) && data().frequency in ['weekly', 'fortnightly', 'fourweekly', 'monthly']
+        && data().cutoffOffset is int && data().cutoffOffset >= 0 && data().cutoffOffset <= 31
+        && data().payDateOffset is int && data().payDateOffset >= 0 && data().payDateOffset <= 31
+        && data().reminderDays is int && data().reminderDays >= 0 && data().reminderDays <= 14
+        && (!('holidayYearStart' in data()) || data().holidayYearStart.matches('^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'))
+        && optNum('overtimeMultiplier', 1, 3) && optNum('accrualRate', 0, 20)
+        && (!('exportColumns' in data()) || (data().exportColumns is list && data().exportColumns.size() <= 30))
+        && stamped();
+      allow delete: if false;
+    }
+    // Pay details: owner/payroll, plus each person their own. Never NI numbers, tax codes or bank details.
+    match /payInfo/{staffId} {
+      allow read: if canPayroll() || (isStaff() && staffId == uid());
+      allow create, update: if canPayroll() && onlyKeys(['staffId', 'payrollId', 'hourlyRate', 'updatedAt', 'updatedBy'])
+        && data().staffId == staffId && optStr('payrollId', 40) && optNum('hourlyRate', 0, 500) && stamped();
+      allow delete: if canPayroll();
+    }
+    // Contract + holiday basis: managers need contracted hours for the sign-off checks; each person sees their own.
+    match /contracts/{staffId} {
+      allow read: if canSeeHours() || (isStaff() && staffId == uid());
+      allow create, update: if canPayroll()
+        && onlyKeys(['staffId', 'contractHours', 'daysPerWeek', 'holidayBasis', 'entitlementHours', 'holidayDayHours',
+                     'carryOverHours', 'updatedAt', 'updatedBy'])
+        && data().staffId == staffId && optNum('contractHours', 0, 80) && optNum('daysPerWeek', 1, 7)
+        && (!('holidayBasis' in data()) || data().holidayBasis in ['accrual', 'entitlement'])
+        && optNum('entitlementHours', 0, 1000) && optNum('holidayDayHours', 0, 24) && optNum('carryOverHours', -500, 500)
+        && stamped();
+      allow delete: if canPayroll();
+    }
+    // Hours sign-off. A period is approved person by person, then locked. Once locked only the owner can
+    // reopen it, and nobody can change its hours, so payroll always sees the final numbers.
+    function periodLocked(p) {
+      return exists(/databases/$(database)/documents/payPeriods/$(p))
+        && get(/databases/$(database)/documents/payPeriods/$(p)).data.get('status', 'open') == 'locked';
+    }
+    match /payPeriods/{periodId} {
+      allow read: if canSeeHours();
+      allow create: if canSignOffHours() && isDate(periodId)
+        && onlyKeys(['start', 'end', 'status', 'lockedAt', 'lockedBy', 'lockedByName', 'updatedAt', 'updatedBy'])
+        && data().start == periodId && isDate(data().end) && data().end >= periodId
+        && data().status in ['open', 'locked']
+        && (data().status == 'open' || (data().lockedAt == request.time && data().lockedBy == uid()))
+        && stamped();
+      allow update: if canSignOffHours()
+        && onlyKeys(['start', 'end', 'status', 'lockedAt', 'lockedBy', 'lockedByName', 'updatedAt', 'updatedBy'])
+        && data().start == resource.data.start && data().end == resource.data.end
+        && data().status in ['open', 'locked']
+        && (resource.data.status != 'locked' || role() == 'owner')
+        && (data().status == 'open' || resource.data.status == 'locked'
+            || (data().lockedAt == request.time && data().lockedBy == uid()))
+        && stamped();
+      allow delete: if false;
+      match /hours/{staffId} {
+        allow read: if canSeeHours();
+        allow create, update: if canSignOffHours() && !periodLocked(periodId)
+          && onlyKeys(['staffId', 'staffName', 'rosteredHours', 'actualHours', 'breakMins', 'overtimeHours',
+                       'holidayHours', 'shifts', 'swaps', 'note', 'approved', 'approvedBy', 'approvedByName',
+                       'approvedAt', 'updatedAt', 'updatedBy'])
+          && data().staffId == staffId && optStr('staffName', 80) && optStr('note', 300)
+          && num(data().rosteredHours, 0, 500) && num(data().actualHours, 0, 500)
+          && optNum('breakMins', 0, 30000) && optNum('overtimeHours', 0, 500) && optNum('holidayHours', 0, 500)
+          && optNum('shifts', 0, 200) && optNum('swaps', 0, 200)
+          && data().approved is bool
+          && (data().approved == false || (data().approvedBy == uid() && data().approvedAt == request.time))
+          && stamped();
+        allow delete: if canSignOffHours() && !periodLocked(periodId);
+      }
+    }
+    // Cut-off reminder markers (Cloud Functions only).
+    match /payrollReminders/{docId} {
+      allow read, write: if false;
+    }
+
+    // Personal display preferences, e.g. the order of people on the rota.
+    // Each signed-in team member can read and write only their own doc; it changes nothing for anyone else.
+    match /prefs/{userId} {
+      allow read: if isStaff() && userId == uid();
+      allow create, update: if isStaff() && userId == uid()
+        && onlyKeys(['rotaOrder', 'updatedAt'])
+        && data().rotaOrder is list && data().rotaOrder.size() <= 300
+        && data().updatedAt == request.time;
+      allow delete: if isStaff() && userId == uid();
+    }
+  }
+}
