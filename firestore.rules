@@ -19,6 +19,11 @@ service cloud.firestore {
     function isStaff() { return role() in ['owner', 'manager', 'staff']; }   // people on the rota
     function isManager() { return role() in ['owner', 'manager']; }
     function isMember() { return role() in ['owner', 'manager', 'staff', 'payroll']; } // anyone signed in to the hub
+    // Developer maintenance login (role claim 'developer', set only by an admin script, never from the app):
+    // it is NOT a member, so every rule above/below denies it. The only thing it can read is its own
+    // staff record (plus its own authGate doc). It cannot read any other staff, rota, pay, payslips,
+    // documents, settings, events or requests, whatever the app's screens do.
+    function isOwnDeveloperRecord(staffId) { return role() == 'developer' && staffId == uid(); }
     // ---- Payroll permission map: change these to adjust what each user type can do with pay. ----
     function canSeeHours() { return role() in ['owner', 'manager', 'payroll']; }    // rota hours, contracts, holiday (not pay periods)
     function canSignOffHours() { return role() == 'owner'; }                        // approve and lock hours (26 Oct: managers can't do payroll)
@@ -39,7 +44,7 @@ service cloud.firestore {
     // see everyone; a team member sees only their own (launch audit, 26 Oct). Colleagues' names for
     // swaps come from /directory below, which holds no contact details.
     match /staff/{staffId} {
-      allow read: if isManager() || canPayroll() || (isMember() && staffId == uid());
+      allow read: if isManager() || canPayroll() || (isMember() && staffId == uid()) || isOwnDeveloperRecord(staffId);
       allow create, update: if false;
       // Team > Left > Delete (Andy, 21 Oct): an owner can delete the record of someone who has already
       // left (terminated by the deleteStaff function, which also removed their login), never their own.

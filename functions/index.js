@@ -3,8 +3,8 @@
  * Callable (from the staff app):
  *   createStaff, updateStaff, deleteStaff   - shared staff accounts + roles (custom claims)
  *   publishWeek                             - publish a week's rota and notify staff
- *   getMailSettings, setMailSettings,
- *   sendTestEmail                           - owner-only SMTP settings for outgoing email
+ *   updateMyDetails                         - staff change their OWN name / login email (myDetails.js)
+ *   (no email-settings callables: SMTP settings and the enquiry recipient are server-only)
  * Triggers:
  *   submitEnquiry     - the ONLY way the public website can create an enquiry (validated,
  *                       rate-limited server-side; visitors cannot write to Firestore directly)
@@ -270,6 +270,16 @@ exports.updateStaff = onCall(async (req) => {
   const snap = await ref.get();
   if (!snap.exists) throw new HttpsError('not-found', 'Staff member not found.');
   const current = snap.data();
+  // The developer's maintenance login is isolated (no staff data, see firestore.rules). Owners can switch
+  // it off or on, nothing else: no role, name or password changes from Team, so it can never be given
+  // staff access. Nobody can be made a developer from the app (ROLES has no 'developer').
+  if (current.developer === true || current.role === 'developer') {
+    const keys = Object.keys(d).filter((k) => k !== 'uid' && d[k] != null);
+    if (keys.some((k) => k !== 'active')) {
+      throw new HttpsError('permission-denied', 'The developer\u2019s maintenance login can only be switched on or off.');
+    }
+  }
+  if (d.role === 'developer' || d.developer != null) throw new HttpsError('permission-denied', 'Nobody can be made a developer from the app.');
   const update = {};
   const authUpdate = {};
   if (d.name != null) {
@@ -699,68 +709,10 @@ exports.onPayslipCreated = onDocumentCreated({ document: 'payslips/{id}', ...MAI
   await emailStaff([p.staffId], 'Your new payslip is ready', `Your payslip for ${p.period} is ready to download in the staff app (Payslips).`);
 });
 
-// ---------------------------------------------------------------- mail settings (owner only)
-exports.getMailSettings = onCall(MAIL, async (req) => {
-  requireRole(req, ['owner']);
-  const m = (await mailSettings()) || {};
-  return {
-    host: m.host || '', port: m.port || 465, secure: m.secure != null ? !!m.secure : true,
-    user: m.user || '', from: m.from || '', enquiryTo: m.enquiryTo || '',
-    enquiryRecipient: enquiryRecipient(m), enabled: m.enabled !== false,
-    emailStaff: m.emailStaff !== false,
-    hasPassword: !!m.pass, passwordInSecretStore: !!m.passFromSecret,
-  };
-});
-exports.setMailSettings = onCall(MAIL, async (req) => {
-  requireRole(req, ['owner']);
-  const d = req.data || {};
-  const snap = await db.doc('private/mail').get();
-  const current = snap.exists ? snap.data() : {};
-  let enquiryTo;
-  try {
-    enquiryTo = enquiry.parseRecipients(d.enquiryTo);
-  } catch (e) {
-    throw new HttpsError('invalid-argument', e.message);
-  }
-  const user = clean(d.user, 150);
-  if (user && !enquiry.isEmail(user)) throw new HttpsError('invalid-argument', 'The username must be the sending email address.');
-  if (/[\r\n]/.test(String(d.from || ''))) throw new HttpsError('invalid-argument', 'Check the From name.');
-  const from = clean(d.from, 150);
-  const host = clean(d.host, 120);
-  if (host && !/^[a-z0-9.-]+$/i.test(host)) throw new HttpsError('invalid-argument', 'Check the SMTP server name.');
-  const next = {
-    host,
-    port: Number(d.port) || 465,
-    secure: !!d.secure,
-    user,
-    from,
-    enquiryTo,
-    ackCustomer: false, // removed: never email addresses typed in by website visitors
-    enabled: d.enabled !== false,
-    emailStaff: d.emailStaff !== false,
-    pass: d.pass ? String(d.pass).slice(0, 200) : current.pass || '',
-    updatedAt: FieldValue.serverTimestamp(),
-    updatedBy: req.auth.uid,
-  };
-  if (d.clearPassword) next.pass = '';
-  await db.doc('private/mail').set(next);
-  return { ok: true, ready: mailReady({ ...next, pass: next.pass || secretPass() }) && next.enabled };
-});
-exports.sendTestEmail = onCall(MAIL, async (req) => {
-  requireRole(req, ['owner']);
-  const m = await mailSettings();
-  if (!mailReady(m)) throw new HttpsError('failed-precondition', 'Fill in the server, username and password first.');
-  try {
-    await sendMail({
-      to: enquiryRecipient(m),
-      subject: 'White Swan staff app: test email',
-      text: 'This is a test from the White Swan staff app. Enquiry emails will arrive like this.',
-    }, m);
-    return { ok: true, to: enquiryRecipient(m) };
-  } catch (e) {
-    throw new HttpsError('failed-precondition', `The mail server said: ${e.message}`);
-  }
-});
+// ---------------------------------------------------------------- mail settings
+// There is no in-app email settings screen and no callable that reads or writes private/mail.
+// SMTP settings and the enquiry recipient live server-side only (private/mail + the SMTP_PASS
+// secret) and change only through the Firebase console / an admin script. Outgoing mail is unchanged.
 
 // ---------------------------------------------------------------- password reset (rate-limited)
 exports.requestPasswordReset = require('./passwordReset').requestPasswordReset;
@@ -770,6 +722,12 @@ const onboardingFns = onboarding.makeFunctions({ sendMail, mailSettings, mailRea
 exports.resendStaffLogin = onboardingFns.resendStaffLogin;
 exports.completePasswordChange = onboardingFns.completePasswordChange;
 exports.expireTempLogins = onboardingFns.expireTempLogins;
+
+// Account > Your details: own name + login email (email needs the current password). See myDetails.js.
+exports.updateMyDetails = require('./myDetails').makeFunctions({
+  gatedOnCall: onboarding.gatedOnCall, sendMail, mailSettings, mailReady, MAIL, clean,
+  takeSlots: onboarding.takeSlots, limitError: onboarding.limitError, apiKey: onboarding.API_KEY, appUrl: APP_URL,
+}).updateMyDetails;
 
 // Day-by-day rota approval (tick on each day). See dayApproval.js.
 {
