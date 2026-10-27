@@ -179,9 +179,12 @@ rep('function P2(){', 'function P2(){return null;')  # old Email settings screen
 u0 = s.index('function Um(')
 u1 = s.index('children:i==="details"?f.jsx(TwsMyDetails', u0)
 um = s[u0:u1]
-m = re.search(r'\[\{key:"[a-z]+",label:"[^"]+"\}(?:,\{key:"[a-z]+",label:"[^"]+"\})*\]', um)
-if not m or 'Email settings' not in m.group(0):
-    sys.exit('Account tabs shape changed: ' + (m.group(0) if m else 'none'))
+# The whole list, including the owner-only spread: everyone gets Your details + Password (fix 10).
+# (27 Oct preview: the first version replaced only the inner owner-only array, so team members never
+# saw Your details and owners got two Password tabs.)
+m = re.search(r'\[\{key:"password",label:"Password"\},\.\.\.e\.isOwner\?\[\{key:"settings",label:"Email settings"\}\]:\[\]\]', um)
+if not m:
+    sys.exit('Account tabs shape changed')
 um2 = um.replace(m.group(0), '[{key:"details",label:"Your details"},{key:"password",label:"Password"}]', 1)
 rep(um, um2)
 
