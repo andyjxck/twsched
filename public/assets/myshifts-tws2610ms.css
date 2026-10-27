@@ -1,0 +1,39 @@
+/* My shifts cards (tws-myshifts-layout).
+   The text column used to have no width of its own (flex: 1 1 0), so when the buttons fitted on
+   the same line it was squashed to a few pixels: the date broke one word per line and the buttons
+   sat on top of the times (seen in Safari on iPhone). Now the text keeps a real width, and on a
+   phone the buttons always go on their own row underneath. */
+html body [data-testid=my-shift] > .row.between {
+  align-items: flex-start;
+  column-gap: 16px;
+  row-gap: 10px;
+}
+html body [data-testid=my-shift] > .row.between > .grow {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+html body [data-testid=my-shift] > .row.between > .grow > strong {
+  display: block;
+}
+html body [data-testid=my-shift] > .row.between > .grow > div:first-of-type {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+html body [data-testid=my-shift] > .row.between > .actions {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+html body [data-testid=my-shift] > .row.between > .actions > .btn {
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  html body [data-testid=my-shift] > .row.between {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  html body [data-testid=my-shift] > .row.between > .grow,
+  html body [data-testid=my-shift] > .row.between > .actions {
+    flex: none;
+    width: 100%;
+  }
+}
