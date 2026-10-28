@@ -63,8 +63,12 @@ def sidebar_css(path):
     m = re.search(r'var css = \[(.*?)\]\.join', s, re.S)
     if not m:
         return []
-    parts = re.findall(r"'((?:\\'|[^'])*)'", m.group(1))
-    txt = '\n'.join(parts)
+    # Each entry is either 'css' or C + 'css' (C = the collapsed-sidebar class). Keep that scope, otherwise
+    # collapsed-only rules (e.g. hiding the group headings) leak into the open sidebar in dark mode.
+    out = []
+    for c, part in re.findall(r"(C\s*\+\s*)?'((?:\\'|[^'])*)'", m.group(1)):
+        out.append(('html.tws-side-collapsed' + part) if c else part)
+    txt = '\n'.join(out)
     txt = txt.replace("' + C + '", 'html.tws-side-collapsed')
     return [txt]
 

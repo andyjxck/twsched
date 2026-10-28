@@ -405,7 +405,7 @@ html[data-theme=dark] .tws-holbtns .btn[aria-expanded="true"]{border-color:var(-
 html[data-theme=dark] .tws-ph-form>.formcard h2:focus{outline:none}
 html[data-theme=dark] .tws-ev-count{border-radius:999px;background:var(--brand-soft);color:var(--ink)}
 /* from assets/sidebar-tws2610s.js (injected) */
-@media (min-width:900px){html[data-theme=dark] .tws-sidetoggle{border:0;border-radius:9px;background:transparent;color:var(--muted)}html[data-theme=dark] .tws-sidetoggle:hover{background:var(--bg);color:var(--ink)}html[data-theme=dark] .tws-sidetoggle:focus-visible{outline:none;box-shadow:var(--focus)}html[data-theme=dark] .sidemenu .side-group{background:var(--line);color:transparent}html[data-theme=dark] .tws-sidetip{border-radius:8px;background:var(--dm-ink-fill);color:#fff;box-shadow:0 6px 18px rgba(0,0,0,0.374)}}
+@media (min-width:900px){html[data-theme=dark] .tws-sidetoggle{border:0;border-radius:9px;background:transparent;color:var(--muted)}html[data-theme=dark] .tws-sidetoggle:hover{background:var(--bg);color:var(--ink)}html[data-theme=dark] .tws-sidetoggle:focus-visible{outline:none;box-shadow:var(--focus)}html[data-theme=dark].tws-side-collapsed .sidemenu .side-group{background:var(--line);color:transparent}html[data-theme=dark] .tws-sidetip{border-radius:8px;background:var(--dm-ink-fill);color:#fff;box-shadow:0 6px 18px rgba(0,0,0,0.374)}}
 /* from assets/index-tws2610hs.js (injected) */
 html[data-theme=dark] .rtw-slot{border:1px solid var(--line);border-radius:8px;background:#191d19}
 /* from assets/index-tws2610hs.js (injected) */
