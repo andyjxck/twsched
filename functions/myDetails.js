@@ -88,7 +88,8 @@ function makeFunctions({ gatedOnCall, sendMail, mailSettings, mailReady, MAIL, c
       const dup = await db().collection('staff').where('email', '==', newEmail).limit(2).get();
       if (dup.docs.some((x) => x.id !== uid)) throw new HttpsError('already-exists', 'Someone else already uses that email.');
       try {
-        await auth().updateUser(uid, { email: newEmail, emailVerified: false });
+        // Stays verified (Andy, 28 Oct): the change needs their current password, and two-step needs a verified email.
+        await auth().updateUser(uid, { email: newEmail, emailVerified: true });
       } catch (e) {
         if (e.code === 'auth/email-already-exists') throw new HttpsError('already-exists', 'Someone else already uses that email.');
         throw e;
