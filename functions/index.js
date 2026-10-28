@@ -20,6 +20,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 // Every callable goes through gatedOnCall: an account that still has to choose its first password
 // (temporary password from Team) can call nothing except completePasswordChange. See onboarding.js.
 const onboarding = require('./onboarding');
+const twoStep = require('./twoStep');
 const onCall = onboarding.gatedOnCall;
 const { onDocumentCreated, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
@@ -73,7 +74,8 @@ async function claimsFor(uid, role) {
   const c = { ...(u.customClaims || {}), role };
   if (role === 'owner' && PRIMARY_OWNER_EMAILS.includes(String(u.email || '').toLowerCase())) c.primaryOwner = true;
   else delete c.primaryOwner;
-  return c;
+  // Two-step for owners and managers once private/twoStep.enforced is on (functions/twoStep.js).
+  return twoStep.withTwoStepClaim(c, role, await twoStep.enforced());
 }
 async function staffName(uid) {
   const s = await db.doc(`staff/${uid}`).get();
@@ -229,13 +231,15 @@ exports.createStaff = onCall(MAIL, async (req) => {
   let user;
   try {
     // No password yet: the temporary one is set (and the account gated) by onboarding.sendLogin below.
-    user = await auth.createUser({ email, displayName: name, emailVerified: false });
+    // Marked verified from the start (Andy, 28 Oct): owners add people by their work email, and two-step
+    // set-up needs a verified email, so nobody is stuck waiting for a confirmation link.
+    user = await auth.createUser({ email, displayName: name, emailVerified: true });
   } catch (e) {
     if (e.code === 'auth/email-already-exists') throw new HttpsError('already-exists', 'Someone already has a login with that email. If they never got their login, open them in Team and tap “Resend login”.');
     if (e.code === 'auth/invalid-email') throw new HttpsError('invalid-argument', 'Enter a valid email address.');
     throw new HttpsError('internal', 'The login could not be created. Try again.');
   }
-  await auth.setCustomUserClaims(user.uid, { role, [onboarding.CLAIM]: true });
+  await auth.setCustomUserClaims(user.uid, twoStep.withTwoStepClaim({ role, [onboarding.CLAIM]: true }, role, await twoStep.enforced()));
   await db.doc(`staff/${user.uid}`).set({
     name,
     email,
@@ -340,6 +344,30 @@ exports.updateStaff = onCall(async (req) => {
 // Terminate someone who has left.
 // Removed: their login, future shifts, pending requests, unavailability and notifications, phone number.
 // Kept (payroll/legal records): name, email, role, leaving date, past shifts and payslips.
+// Two-step reset (lost phone): an owner clears another login's authenticator so they can set it up
+// again at their next sign-in. The owner calling this has passed two-step themselves when it is
+// enforced (gatedOnCall refuses them otherwise). It never removes the requirement (the mfa claim
+// stays), so the reset login still reaches nothing until it enrols a new authenticator.
+exports.resetTwoStep = onCall(async (req) => {
+  requireOwner(req, 'Only an owner can reset two-step verification.');
+  const uid = clean((req.data || {}).uid, 128);
+  if (!uid) throw new HttpsError('invalid-argument', 'Missing staff member.');
+  if (uid === req.auth.uid) {
+    throw new HttpsError('failed-precondition', 'Ask another owner to reset your two-step verification.');
+  }
+  const snap = await db.doc(`staff/${uid}`).get();
+  if (!snap.exists) throw new HttpsError('not-found', 'Staff member not found.');
+  try {
+    await auth.updateUser(uid, { multiFactor: { enrolledFactors: null } });
+    await auth.revokeRefreshTokens(uid);
+  } catch (e) {
+    if (e.code === 'auth/user-not-found') throw new HttpsError('not-found', 'That login no longer exists.');
+    throw new HttpsError('internal', 'Could not reset two-step verification.');
+  }
+  await snap.ref.set({ twoStepResetAt: FieldValue.serverTimestamp(), twoStepResetBy: req.auth.uid }, { merge: true });
+  return { ok: true };
+});
+
 exports.deleteStaff = onCall(async (req) => {
   requireOwner(req, 'Only management can remove staff.');
   const uid = clean((req.data || {}).uid, 128);

@@ -1,0 +1,10 @@
+{
+  "name": "tws-two-step-build",
+  "private": true,
+  "description": "Builds public/assets/twostep/*.js (two-step sign-in and set-up). Same Firebase version as the main bundle.",
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "firebase": "11.10.0",
+    "qrcode-generator": "1.4.4"
+  }
+}

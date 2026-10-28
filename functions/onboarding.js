@@ -28,6 +28,7 @@
  * notifications" switch, but respect the master "emails on/off" switch in Settings.
  */
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const twoStep = require('./twoStep');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const logger = require('firebase-functions/logger');
 const admin = require('firebase-admin');
@@ -164,6 +165,8 @@ async function assertNotGated(req) {
   if (req.auth.token && req.auth.token[CLAIM] === true) {
     throw new HttpsError('failed-precondition', PASSWORD_REQUIRED, { reason: 'password-change-required' });
   }
+  // Management logins that must use two-step but signed in without it (functions/twoStep.js).
+  twoStep.assertTwoStep(req);
   const g = await gateRef(req.auth.uid).get();
   if (g.exists) throw new HttpsError('failed-precondition', PASSWORD_REQUIRED, { reason: 'password-change-required' });
 }
