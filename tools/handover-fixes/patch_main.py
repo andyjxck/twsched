@@ -9,6 +9,7 @@ Fixes in this file (numbers from the recovery handover):
   1  Right to Work: missing docs = small "!" by the name on the rota (hover / tap / keyboard).
   2  Payslips: monthly payslips as tiles, two per row; "who can open these" note hidden.
   3  Holidays: "Ask for holiday" / "Mark someone unavailable" as small top-right buttons.
+     Their forms open inline straight under the buttons (pushing the page down), scrolled into view if needed.
   4  Events: on desktop Coming up / Every week / Past all show at once as rows; phone keeps tabs.
  10  Account > Your details: change your own name and login email (email needs current password).
  11  Account: Email settings tab removed (server callables removed too, see functions/).
@@ -140,7 +141,7 @@ rep('p.docs?f.jsx("ul",{className:"list",children:ie.map(', 'p.docs?f.jsx("ul",{
 
 # ------------------------------------------------------------------ 3. Holidays: small top-right buttons
 rep('F&&f.jsx("div",{className:"pagehead",children:f.jsx("h1",{children:F[0]})})',
-    'F&&f.jsxs("div",{className:"pagehead",children:[f.jsx("h1",{children:F[0]}),f.jsx("div",{className:"tws-ph-actions",id:"tws-ph-actions"})]})')
+    'F&&f.jsxs("div",{className:"pagehead",children:[f.jsx("h1",{children:F[0]}),f.jsx("div",{className:"tws-ph-actions",id:"tws-ph-actions"}),f.jsx("div",{className:"tws-ph-form",id:"tws-ph-form"})]})')
 h0 = s.index('function TwHolAsk(){')
 h1 = func_end(s, h0)
 hol = s[h0:h1]
@@ -159,8 +160,18 @@ new_group = re.sub(r'f\.jsx\("span",\{className:"ic",children:f\.jsx\(ef,\{name:
 if new_group.count('size:16') != 2 or 'actcard' in new_group:
     sys.exit('holiday buttons shape changed')
 hol2 = hol.replace(old_head,
-                   'function TwHolAsk(){const n=ht(),[e,t]=G.useState(""),r=i=>t(e===i?"":i),[__hh,__sh]=G.useState(null);G.useLayoutEffect(function(){__sh(document.getElementById("tws-ph-actions"))},[]);', 1)
+                   'function TwHolAsk(){const n=ht(),[e,t]=G.useState(""),r=i=>t(e===i?"":i),[__hh,__sh]=G.useState(null),[__ff,__sf]=G.useState(null);'
+                   'G.useLayoutEffect(function(){__sh(document.getElementById("tws-ph-actions"));__sf(document.getElementById("tws-ph-form"))},[]);'
+                   'G.useEffect(function(){if(!e)return;var id=e==="holiday"?"ask-holiday":"mark-unav",fm=document.getElementById(id);if(!fm)return;'
+                   'var bar=0;document.querySelectorAll(".mbar,.pill-nav").forEach(function(x){var b=x.getBoundingClientRect();if(b.height&&getComputedStyle(x).position!=="static"&&b.top<=1)bar=Math.max(bar,b.bottom)});'
+                   'var rc=fm.getBoundingClientRect(),hd=fm.querySelector("h2");'
+                   'if(rc.top<bar+8||rc.top>innerHeight-140){var rm=window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches;window.scrollBy({top:rc.top-bar-12,behavior:rm?"auto":"smooth"})}'
+                   'if(hd){hd.setAttribute("tabindex","-1");try{hd.focus({preventScroll:!0})}catch(_){}}},[e]);', 1)
 hol2 = hol2.replace(btn_group, '(function(__b){return __hh&&Vn.createPortal?Vn.createPortal(__b,__hh):__b})(' + new_group + ')', 1)
+fm0 = ',e==="holiday"&&f.jsx(u2,{onClose:()=>t("")}),e==="unav"&&f.jsx(c2,{onClose:()=>t("")})]})}'
+if hol2.count(fm0) != 1:
+    sys.exit('holiday forms shape changed')
+hol2 = hol2.replace(fm0, ',(function(__fx){return __ff&&__fx&&Vn.createPortal?Vn.createPortal(__fx,__ff):__fx})(e==="holiday"?f.jsx(u2,{onClose:()=>t("")}):e==="unav"?f.jsx(c2,{onClose:()=>t("")}):null)]})}', 1)
 rep(hol, hol2)
 
 # ------------------------------------------------------------------ 4. Events: desktop shows all three as rows
