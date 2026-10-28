@@ -45,6 +45,35 @@ service firebase.storage {
       allow update: if false;
     }
 
+    // ---------- Website editor photos (andyjxck/wshenley) ----------
+    // Paste inside `match /b/{bucket}/o { ... }` in the Staff Hub's storage.rules (repo andyjxck/twsched).
+    // Uses that file's role() helper. Same editors as firestore.rules: owners, plus Staff Hub accounts an
+    // owner has approved in webEditors/{uid}.
+    function isWebEditor() {
+      return role() == 'owner'
+        || (role() in ['manager', 'staff', 'payroll']
+            && firestore.exists(/databases/(default)/documents/webEditors/$(request.auth.uid)));
+    }
+    function webPhoto(fileName) {
+      return fileName.matches('^[a-f0-9]{24}\\.jpg$')
+        && request.resource.contentType == 'image/jpeg'
+        && request.resource.size > 0
+        && request.resource.size <= 8 * 1024 * 1024;
+    }
+    // Draft uploads: private to editors until published.
+    match /site-draft/{fileName} {
+      allow read, delete: if isWebEditor();
+      allow create: if resource == null && isWebEditor() && webPhoto(fileName);
+      allow update: if false;
+    }
+    // Published photos: anyone can view them (they're on the live site); only editors add them, and a
+    // published photo is never overwritten or removed from the page side, so the live site can't break.
+    match /site/{fileName} {
+      allow read: if true;
+      allow create: if resource == null && isWebEditor() && webPhoto(fileName);
+      allow update, delete: if false;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

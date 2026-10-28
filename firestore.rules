@@ -458,5 +458,43 @@ service cloud.firestore {
         && data().updatedAt == request.time;
       allow delete: if isStaff() && userId == uid();
     }
+
+    // ---------- Website editor (andyjxck/wshenley) ----------
+    // Paste inside `match /databases/{database}/documents { ... }` in the Staff Hub's firestore.rules
+    // (repo andyjxck/twsched), next to the other website rules. Uses that file's helpers:
+    // role(), isMember(), uid(), data(), onlyKeys(), optStr().
+    //
+    // Who may edit the website: owners, plus any Staff Hub account an owner approves by creating
+    // webEditors/{thatUid} (any content, e.g. { name: 'Sam' }). Nobody else, and never a visitor.
+    function isWebEditor() {
+      return role() == 'owner'
+        || (isMember() && exists(/databases/$(database)/documents/webEditors/$(uid())));
+    }
+    function validSiteContent() {
+      return onlyKeys(['text', 'photos', 'order', 'updatedAt', 'updatedBy', 'updatedByName'])
+        && data().text is map
+        && data().photos is map
+        && data().order is list && data().order.size() <= 12
+        && data().updatedAt == request.time
+        && data().updatedBy == uid()
+        && optStr('updatedByName', 120);
+    }
+    // siteContent/published: what every visitor sees (readable by anyone, written only by editors).
+    // siteContent/draft: the editors' private draft. Not readable by visitors or other staff.
+    match /siteContent/{docId} {
+      allow read: if docId == 'published' || isWebEditor();
+      allow create, update: if docId in ['published', 'draft'] && isWebEditor() && validSiteContent();
+      allow delete: if false;
+    }
+    // A copy of everything ever published, for putting an older version back if needed.
+    match /siteContentHistory/{id} {
+      allow read: if isWebEditor();
+      allow create: if isWebEditor() && validSiteContent();
+      allow update, delete: if false;
+    }
+    match /webEditors/{userId} {
+      allow read: if role() == 'owner' || (request.auth != null && userId == uid());
+      allow write: if role() == 'owner';
+    }
   }
 }
