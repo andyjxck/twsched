@@ -405,4 +405,6 @@ async function passwordSignIn(email, password) {
 module.exports = {
   CLAIM, GATE, LIMITS, TEMP_TTL_MS, gatedOnCall, assertNotGated, issueTempLogin, makeFunctions,
   generateTempPassword, checkNewPassword, loginEmail, safeReason,
+  // used by myDetails.js (Account > Your details)
+  takeSlots, limitError, API_KEY, APP_URL,
 };

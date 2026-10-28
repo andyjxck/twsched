@@ -42,14 +42,14 @@ function directoryEntry(d) {
   await db.doc(`staff/${st.uid}`).update({ role: 'owner', primaryOwner: true, updatedAt: FieldValue.serverTimestamp() });
   console.log('Stella ->', JSON.stringify(sc));
 
-  // Developer login (manager level), hidden from staff lists and the rota, shown to owners in Team
+  // Developer login (isolated: no staff data), hidden from staff lists and the rota, shown to owners in Team
   let dev;
   try { dev = await auth.getUserByEmail(DEV); } catch (e) {
     dev = await auth.createUser({ email: DEV, displayName: 'Andy (developer)', emailVerified: false });
   }
-  await auth.setCustomUserClaims(dev.uid, { role: 'manager' });
+  await auth.setCustomUserClaims(dev.uid, { role: 'developer' }); // isolated maintenance login (see firestore.rules)
   await db.doc(`staff/${dev.uid}`).set({
-    name: 'Andy (developer)', email: DEV, role: 'manager', jobTitle: 'App developer (maintenance)', phone: '',
+    name: 'Andy (developer)', email: DEV, role: 'developer', jobTitle: 'App developer (maintenance)', phone: '',
     onRota: false, active: true, developer: true,
     createdAt: FieldValue.serverTimestamp(), createdBy: a.uid,
   }, { merge: true });
