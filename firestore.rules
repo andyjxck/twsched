@@ -391,10 +391,14 @@ service cloud.firestore {
       allow delete: if false;
     }
     // Pay details: owner/payroll, plus each person their own. Never NI numbers, tax codes or bank details.
+    // payType 'salary' + annualSalary (GBP a year) for salaried staff; hourly staff have neither field.
     match /payInfo/{staffId} {
       allow read: if canPayroll() || (isStaff() && staffId == uid());
-      allow create, update: if canPayroll() && onlyKeys(['staffId', 'payrollId', 'hourlyRate', 'updatedAt', 'updatedBy'])
-        && data().staffId == staffId && optStr('payrollId', 40) && optNum('hourlyRate', 0, 500) && stamped();
+      allow create, update: if canPayroll()
+        && onlyKeys(['staffId', 'payrollId', 'hourlyRate', 'payType', 'annualSalary', 'updatedAt', 'updatedBy'])
+        && data().staffId == staffId && optStr('payrollId', 40) && optNum('hourlyRate', 0, 500)
+        && (!('payType' in data()) || data().payType in ['hourly', 'salary'])
+        && optNum('annualSalary', 0, 1000000) && stamped();
       allow delete: if canPayroll();
     }
     // Contract + holiday basis: managers need contracted hours for the sign-off checks; each person sees their own.
