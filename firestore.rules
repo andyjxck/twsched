@@ -14,7 +14,15 @@ service cloud.firestore {
     // only by Cloud Functions. Deliberately a token-only check: an exists() here is evaluated on every
     // role() call and pushed the shift rules over Firestore's 1000-expression limit. Callables and
     // Storage additionally check the authGate/{uid} marker for tokens minted before a reset.
-    function role() { return signedIn() && request.auth.token.get('pwChange', false) != true ? request.auth.token.get('role', '') : ''; }
+    // Two-step (functions/twoStep.js): a login with custom claim mfa=true (owners and managers, once
+    // enforcement is switched on) has no role at all unless this sign-in completed a second factor.
+    // Token-only, like pwChange. The developer login never gets the claim, and 'developer' is not a role
+    // in any rule below, so it reaches nothing either way.
+    function twoStepOk() {
+      return request.auth.token.get('mfa', false) != true
+        || request.auth.token.get('firebase', {}).get('sign_in_second_factor', null) != null;
+    }
+    function role() { return signedIn() && request.auth.token.get('pwChange', false) != true && twoStepOk() ? request.auth.token.get('role', '') : ''; }
     // User types: owner (everything), manager, payroll (payroll tools only, not on the rota), staff (team member).
     function isStaff() { return role() in ['owner', 'manager', 'staff']; }   // people on the rota
     function isManager() { return role() in ['owner', 'manager']; }

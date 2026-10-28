@@ -11,6 +11,9 @@ service firebase.storage {
     // server-only marker authGate/{uid} in Firestore, which also catches older tokens). See onboarding.js.
     function gateClear() {
       return request.auth.token.get('pwChange', false) != true
+        // Two-step (functions/twoStep.js): mfa=true logins need a second factor on this sign-in.
+        && (request.auth.token.get('mfa', false) != true
+            || request.auth.token.get('firebase', {}).get('sign_in_second_factor', null) != null)
         && !firestore.exists(/databases/(default)/documents/authGate/$(request.auth.uid));
     }
     function role() { return request.auth != null && gateClear() ? request.auth.token.get('role', '') : ''; }
