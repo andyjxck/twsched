@@ -51,8 +51,14 @@ service cloud.firestore {
     // Full staff records (email, phone, login status) are personal data: managers, payroll and owners
     // see everyone; a team member sees only their own (launch audit, 26 Oct). Colleagues' names for
     // swaps come from /directory below, which holds no contact details.
+    // The developer's maintenance login (developer: true) exists for owners only (Andy, 30 Oct): managers
+    // and payroll can read every other record, never that one. Their list queries must therefore filter
+    // where('developer', '==', false); every other staff record carries developer: false (createStaff).
+    // Don't write resource.data.get('developer', false): in the emulator that let an unfiltered list through.
     match /staff/{staffId} {
-      allow read: if isManager() || canPayroll() || (isMember() && staffId == uid()) || isOwnDeveloperRecord(staffId);
+      allow read: if role() == 'owner'
+        || ((isManager() || canPayroll()) && resource.data.developer == false)
+        || (isMember() && staffId == uid()) || isOwnDeveloperRecord(staffId);
       allow create, update: if false;
       // Team > Left > Delete (Andy, 21 Oct): an owner can delete the record of someone who has already
       // left (terminated by the deleteStaff function, which also removed their login), never their own.

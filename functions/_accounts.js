@@ -11,7 +11,7 @@ const DEV = 'andy@andysocialapps.website';
 const mode = process.argv[2] || 'show';
 
 function directoryEntry(d) {
-  if (!d || d.developer === true) return null;
+  if (!d || d.developer === true || d.role === 'developer') return null;
   return { name: d.name || '', jobTitle: d.jobTitle || '', role: d.role || 'staff',
     active: d.active !== false, terminated: d.terminated === true, onRota: d.onRota !== false };
 }

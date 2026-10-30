@@ -51,6 +51,11 @@ const SITE_URL = 'https://andyjxck.github.io/wshenley/';
 const { APP_URL, APP_ORIGINS, LOCAL_ORIGIN } = require('./siteConfig'); // https://tws-rota.co.uk/ (shared with onboarding.js and passwordReset.js)
 // User types (Andy, 21 Oct): owner, manager, payroll (payroll tools only, not on the rota), staff (team member).
 const ROLES = ['owner', 'manager', 'payroll', 'staff'];
+// The developer's maintenance login. Only owners may know it exists (Andy, 30 Oct): it is never in the
+// colleague directory, alerts or owner counts, and firestore.rules hide its staff record from managers
+// and payroll (their staff queries filter developer == false, so every other record carries
+// developer: false). Same test as the app's __twsIsDev.
+function isDeveloper(d) { return !!d && (d.developer === true || d.role === 'developer'); }
 // Permissions (Andy, 26 Oct): ANY owner can change anything - owners, managers, payroll and team
 // members: user types, logins, temporary passwords, switching logins on/off and removing people.
 // Managers run the rota and the day-to-day (shifts, events, time off, enquiries). They can NOT add,
@@ -67,7 +72,8 @@ const PRIMARY_OWNER_EMAIL = 'andyblewett9@gmail.com';
 // still an active owner who has not left.
 async function anotherActiveOwner(uid) {
   const snap = await db.collection('staff').where('role', '==', 'owner').get();
-  return snap.docs.some((x) => x.id !== uid && x.get('active') !== false && x.get('terminated') !== true);
+  // the hidden developer login never counts as the other owner
+  return snap.docs.some((x) => x.id !== uid && x.get('active') !== false && x.get('terminated') !== true && !isDeveloper(x.data()));
 }
 async function claimsFor(uid, role) {
   const u = await auth.getUser(uid);
@@ -158,7 +164,7 @@ async function notify(uids, note) {
 async function managerIds() {
   const snap = await db.collection('staff').where('role', 'in', ['owner', 'manager']).get();
   // the hidden developer (maintenance) login gets no manager alerts
-  return snap.docs.filter((d) => d.get('active') !== false && d.get('developer') !== true).map((d) => d.id);
+  return snap.docs.filter((d) => d.get('active') !== false && !isDeveloper(d.data())).map((d) => d.id);
 }
 
 // ---------------------------------------------------------------- email
@@ -248,6 +254,7 @@ exports.createStaff = onCall(MAIL, async (req) => {
     phone: clean(d.phone, 40),
     onRota: true, // everyone who works here is on the rota; there is no opt-out
     active: true,
+    developer: false, // managers' and payroll's staff queries match on this (see isDeveloper)
     createdAt: FieldValue.serverTimestamp(),
     createdBy: req.auth.uid,
   });
@@ -790,7 +797,7 @@ async function sendCutoffReminder(today) {
   const already = await marker.get();
   if (already.exists) return { sent: false, reason: 'already sent', period: p };
   const people = (await db.collection('staff').where('role', 'in', ['payroll', 'owner']).get()).docs
-    .filter((d) => d.get('active') !== false && !d.get('terminated'));
+    .filter((d) => d.get('active') !== false && !d.get('terminated') && !isDeveloper(d.data()));
   const payroll = people.filter((d) => d.get('role') === 'payroll').map((d) => d.id);
   const to = payroll.length ? payroll : people.map((d) => d.id);
   const days = payperiods.daysBetween(today, p.cutoff);
@@ -811,7 +818,7 @@ exports.onPayslipStored = documents.onPayslipStored;
 // Colleague directory (launch audit, 26 Oct): team members can no longer read every staff record
 // (emails, phone numbers). They read names from directory/{uid} instead. The developer login is never listed.
 function directoryEntry(d) {
-  if (!d || d.developer === true) return null;
+  if (!d || isDeveloper(d)) return null;
   return {
     name: d.name || '', jobTitle: d.jobTitle || '', role: d.role || 'staff',
     active: d.active !== false, terminated: d.terminated === true, onRota: d.onRota !== false,
