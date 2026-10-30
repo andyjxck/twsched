@@ -2,8 +2,7 @@
    Standalone plain script. The Rota page (management only) calls window.__twsRotaPrint(data) from its
    "Print" button with what it has already loaded for the week, so this reads nothing from Firestore.
    Opens a print preview over the app with one A4 landscape sheet, laid out like the pub's paper rota:
-   one table per department (Front of house, Kitchen, then any others), names down the left, Monday to
-   Sunday along the top, short pub-style times (17:00-23:00 -> "5-11"), and an Events row from the app's
+   one table for the whole team in the Rota page's order, names down the left, Monday to Sunday along the top, short pub-style times (17:00-23:00 -> "5-11"), and an Events row from the app's
    own events. Printing hides everything except the sheet, in light colours whatever the theme.
    Styles: assets/rotaprint-tws2610rx.css. Source: tools/rota-print/. */
 (function () {
@@ -12,24 +11,11 @@
 
   var DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  // The app's areas (Team > Job and the shift's Area) grouped into departments, in print order.
-  var DEPTS = [
-    { key: 'foh', name: 'Front of house', areas: ['Bar', 'Floor', 'Events'] },
-    { key: 'kitchen', name: 'Kitchen', areas: ['Kitchen'] },
-    { key: 'reception', name: 'Reception', areas: ['Reception'] },
-    { key: 'housekeeping', name: 'Housekeeping', areas: ['Housekeeping'] },
-    { key: 'management', name: 'Management', areas: ['Management'] },
-    { key: 'other', name: 'Other', areas: [] }
-  ];
   // A4 landscape with 8 mm margins: the printable area, in CSS pixels (96 per inch).
   var MM = 96 / 25.4, PAGE_W = Math.round(281 * MM), PAGE_H = Math.floor(194 * MM);
 
   function d(iso) { var p = iso.split('-').map(Number); return new Date(p[0], p[1] - 1, p[2], 12); }
   function ord(n) { var t = n % 100; if (t >= 11 && t <= 13) return n + 'th'; return n + ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th'); }
-  function deptOf(area) {
-    for (var i = 0; i < DEPTS.length; i++) if (DEPTS[i].areas.indexOf(area) >= 0) return DEPTS[i].key;
-    return '';
-  }
   // "17:00" -> "5", "17:30" -> "5:30", "12:00" -> "12", "00:00" -> "12". Pub style, no am/pm.
   function short(t) {
     if (!t) return '';
@@ -56,39 +42,21 @@
     shifts.forEach(function (s) { var k = (s.staffId || '') + '|' + s.date; (byKey[k] = byKey[k] || []).push(s); });
     Object.keys(byKey).forEach(function (k) { byKey[k].sort(function (a, b) { return (a.start || '').localeCompare(b.start || ''); }); });
 
-    var groups = {};
-    DEPTS.forEach(function (g) { groups[g.key] = []; });
+    // One table for everyone, in the Rota page's own order (Andy, 30 Oct: no department sections).
+    var rows = [];
     people.forEach(function (p) {
       if (p.open) return;
-      var mine = shifts.filter(function (s) { return s.staffId === p.id; });
-      var hol = days.some(function (x) { var b = data.blocks && data.blocks[p.id + '|' + x]; return b && b.kind === 'holiday'; });
-      if (p.gone && !mine.length) return; // left: only if they still have shifts this week
-      // Home department: their Job in Team; with none, the area they work most this week.
-      var key = deptOf(p.jobTitle);
-      if (!key) {
-        var n = {};
-        mine.forEach(function (s) { var k = deptOf(s.area); if (k) n[k] = (n[k] || 0) + 1; });
-        key = Object.keys(n).sort(function (a, b) { return n[b] - n[a]; })[0] || (mine.length || hol ? 'other' : 'foh');
-      }
-      groups[key].push({ id: p.id, name: p.name || 'No name', dept: key });
+      if (p.gone && !shifts.some(function (s) { return s.staffId === p.id; })) return; // left: only with shifts this week
+      rows.push({ id: p.id, name: p.name || 'No name' });
     });
-    // Open shifts: one row in each department that has some.
-    var open = shifts.filter(function (s) { return !s.staffId; });
-    DEPTS.forEach(function (g) {
-      var mine = open.filter(function (s) { return (deptOf(s.area) || 'other') === g.key; });
-      if (mine.length) groups[g.key].push({ id: '', name: 'Open shift', dept: g.key, open: true, only: g.key });
-    });
-    // A department only gets a table when someone in it works or is on holiday that week.
-    var busy = {};
-    shifts.forEach(function (s) { if (s.staffId) busy[s.staffId] = true; });
-    Object.keys(data.blocks || {}).forEach(function (k) { if (data.blocks[k].kind === 'holiday') busy[k.split('|')[0]] = true; });
-    var tables = DEPTS.filter(function (g) { return groups[g.key].some(function (r) { return r.open || busy[r.id]; }); }).map(function (g) { return { dept: g, rows: groups[g.key] }; });
+    if (shifts.some(function (s) { return !s.staffId; })) rows.push({ id: '', name: 'Open shift', open: true });
+    var tables = rows.length && shifts.length ? [{ dept: { key: 'all', name: 'Name' }, rows: rows }] : [];
     return { tables: tables, byKey: byKey, shifts: shifts, drafts: shifts.filter(function (s) { return !s.published; }).length };
   }
 
   function cell(data, P, row, day) {
     var td = el('td', 'c');
-    var list = (P.byKey[row.id + '|' + day] || []).filter(function (s) { return !row.open || (deptOf(s.area) || 'other') === row.only; });
+    var list = P.byKey[row.id + '|' + day] || [];
     var b = !row.open && data.blocks ? data.blocks[row.id + '|' + day] : null;
     var hol = b && b.kind === 'holiday';
     if (hol && !list.length) { td.className += ' hol'; td.appendChild(el('span', 'tag', 'Holiday')); return td; }
@@ -97,8 +65,6 @@
       var t = el('span', 't', short(s.start) + '\u2013' + short(s.end));
       w.appendChild(t);
       if (s.leader) w.appendChild(el('span', 'star', '\u2605'));
-      var k = deptOf(s.area) || 'other';
-      if (!row.open && s.area && k !== row.dept) w.appendChild(el('span', 'ar', s.area));
       if (!s.published) w.appendChild(el('span', 'dr', 'draft'));
       if (hol) w.appendChild(el('span', 'dr', 'on holiday'));
       if (s.notes) w.appendChild(el('div', 'nt', s.notes));
@@ -157,12 +123,12 @@
         days.forEach(function (x) { tr.appendChild(cell(data, P, r, x)); });
         tbody.appendChild(tr);
       });
-      // Events from the app go under the first department (front of house); the others get a blank row to write on.
+      // The week's events from the app's Events, along the bottom.
       var er = el('tr', 'ev');
-      er.appendChild(el('th', 'nm', ti === 0 ? 'Events' : 'Notes'));
+      er.appendChild(el('th', 'nm', 'Events'));
       days.forEach(function (x, i) {
         var c = el('td', 'c');
-        if (ti === 0) (events[i] || []).slice().sort(function (a, b) { return (a.start || '').localeCompare(b.start || ''); }).forEach(function (e) { c.appendChild(el('div', 'evt', eventText(e))); });
+        (events[i] || []).slice().sort(function (a, b) { return (a.start || '').localeCompare(b.start || ''); }).forEach(function (e) { c.appendChild(el('div', 'evt', eventText(e))); });
         er.appendChild(c);
       });
       tbody.appendChild(er);

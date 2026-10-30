@@ -96,7 +96,7 @@ async function sh(name, day, start, end, area, extra = {}) {
     const over = [...s.querySelectorAll('th,td,h1,.evt,.t')].filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.textContent.trim());
     const rowOf = (name) => { const th = [...s.querySelectorAll('th.nm')].find((e) => e.textContent === name); return th ? [...th.parentNode.children].map((c) => c.textContent.trim()) : null; };
     return {
-      h1: s.querySelector('h1').textContent, depts: txt('th.dept'), days: txt('table.grid')[0] ? [...s.querySelector('table.grid thead tr').children].slice(1).map((e) => e.textContent) : [],
+      h1: s.querySelector('h1').textContent, tables: s.querySelectorAll('table.grid').length, depts: txt('th.dept'), days: txt('table.grid')[0] ? [...s.querySelector('table.grid thead tr').children].slice(1).map((e) => e.textContent) : [],
       names: txt('th.nm'), over, height: s.scrollHeight, font: s.style.fontSize, zoom: s.style.transform || 'none',
       amy: rowOf('Amy Fletcher'), chloe: rowOf('Chloe Price'), dan: rowOf('Dan Hughes'), ben: rowOf('Ben Carter'), jack: rowOf('Jack Morris'), toby: rowOf('Toby Newman'), open: rowOf('Open shift'),
       events: [...s.querySelectorAll('tr.ev')].map((r) => [...r.children].map((c) => c.textContent.trim())),
@@ -111,16 +111,16 @@ async function sh(name, day, start, end, area, extra = {}) {
   console.log(JSON.stringify({ h1: S.h1, depts: S.depts, days: S.days, font: S.font, zoom: S.zoom, height: S.height }, null, 0));
   check('heading has w/c date', S.h1 === 'Rota w/c Monday 2nd November 2026', S.h1);
   check('day headers Monday 2nd .. Sunday 8th', S.days[0] === 'Monday 2nd' && S.days[6] === 'Sunday 8th', S.days.join(', '));
-  check('departments: Front of house, Kitchen, Housekeeping (Management has no shifts, so no table)', S.depts.join('|') === 'Front of house|Kitchen|Housekeeping', S.depts.join('|'));
-  check('Toby (no job) grouped into Front of house by his bar shifts', S.toby && S.depts.length && true, JSON.stringify(S.toby));
+  check('one table for the whole team, no department sections', S.depts.join('|') === 'Name' && S.tables === 1, S.depts.join('|') + ' x' + S.tables);
+  check('everyone listed (page order), open shift last', S.names.includes('Olly Owner') && S.names.includes('Rosie Grant') && S.names.includes('Jack Morris') && S.names[S.names.length - 2] === 'Open shift' && S.names[S.names.length - 1] === 'Events', S.names.join(', '));
+  check('Toby (no job) listed', !!S.toby, JSON.stringify(S.toby));
   check('pub-style times', /12\u20136/.test(S.text) && /11\u201311/.test(S.text) && /5:30\u201311:30/.test(S.text) && /6\u201312:30/.test(S.text), '');
   check('holiday shown', S.chloe && S.chloe[3] === 'Holiday' && S.dan && /on holiday/.test(S.dan[1]), JSON.stringify([S.chloe, S.dan]));
   check('draft not printed by default', S.ben && S.ben[7] === '', JSON.stringify(S.ben));
-  check('cross-department shift tagged', S.amy && /Kitchen/.test(S.amy[7]), JSON.stringify(S.amy));
+  check('two shifts in one day both shown, no area labels', S.amy && /10\u20133/.test(S.amy[7]) && /12\u20135/.test(S.amy[7]) && !/Kitchen|Bar/.test(S.amy[7]), JSON.stringify(S.amy));
   check('shift note shown', S.jack && /Stock/.test(S.jack[1]), JSON.stringify(S.jack));
   check('open shift row', S.open && /7\u201311/.test(S.open[6]), JSON.stringify(S.open));
-  check('events row under first table', S.events[0] && /Burger night/.test(S.events[0][1]) && /Music bingo/.test(S.events[0][4]) && /Sunday roast/.test(S.events[0][7]), JSON.stringify(S.events[0]));
-  check('other tables get blank Notes row', S.events.slice(1).every((r) => r[0] === 'Notes' && r.slice(1).every((c) => c === '')));
+  check('events row along the bottom', S.events.length === 1 && S.events[0][0] === 'Events' && S.events[0] && /Burger night/.test(S.events[0][1]) && /Music bingo/.test(S.events[0][4]) && /Sunday roast/.test(S.events[0][7]), JSON.stringify(S.events[0]));
   check('logo loaded', S.logo > 0, String(S.logo));
   check('no clipped text in cells', S.over.length === 0, S.over.join(' | '));
   check('fits one A4 landscape page', S.height <= Math.floor(194 * 96 / 25.4), S.height + 'px at ' + S.font);
