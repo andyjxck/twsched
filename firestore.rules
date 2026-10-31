@@ -487,10 +487,10 @@ service cloud.firestore {
     // (repo andyjxck/twsched), next to the other website rules. Uses that file's helpers:
     // role(), isMember(), uid(), data(), onlyKeys(), optStr().
     //
-    // Who may edit the website: owners, plus any Staff Hub account an owner approves by creating
-    // webEditors/{thatUid} (any content, e.g. { name: 'Sam' }). Nobody else, and never a visitor.
+    // Who may edit the website: owners and managers, plus any Staff Hub account an owner approves by
+    // creating webEditors/{thatUid} (any content, e.g. { name: 'Sam' }). Nobody else, and never a visitor.
     function isWebEditor() {
-      return role() == 'owner'
+      return role() in ['owner', 'manager']
         || (isMember() && exists(/databases/$(database)/documents/webEditors/$(uid())));
     }
     function validSiteContent() {

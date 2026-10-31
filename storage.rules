@@ -50,11 +50,11 @@ service firebase.storage {
 
     // ---------- Website editor photos (andyjxck/wshenley) ----------
     // Paste inside `match /b/{bucket}/o { ... }` in the Staff Hub's storage.rules (repo andyjxck/twsched).
-    // Uses that file's role() helper. Same editors as firestore.rules: owners, plus Staff Hub accounts an
-    // owner has approved in webEditors/{uid}.
+    // Uses that file's role() helper. Same editors as firestore.rules: owners and managers, plus Staff Hub
+    // accounts an owner has approved in webEditors/{uid}.
     function isWebEditor() {
-      return role() == 'owner'
-        || (role() in ['manager', 'staff', 'payroll']
+      return role() in ['owner', 'manager']
+        || (role() in ['staff', 'payroll']
             && firestore.exists(/databases/(default)/documents/webEditors/$(request.auth.uid)));
     }
     function webPhoto(fileName) {
