@@ -1,6 +1,6 @@
 [
   {
-    "origin": ["https://andyjxck.github.io", "http://localhost:5173", "http://localhost:4173"],
+    "origin": ["https://tws-rota.co.uk","https://andyjxck.github.io", "http://localhost:5173", "http://localhost:4173"],
     "method": ["GET", "HEAD"],
     "responseHeader": ["Content-Type", "Content-Disposition", "Content-Length"],
     "maxAgeSeconds": 3600
