@@ -132,8 +132,8 @@ async function takeSlots(windows, cooldown, now = Date.now()) {
 function limitError(slot) {
   const wait = slot.retryAfter > 90 ? `${Math.ceil(slot.retryAfter / 60)} minutes` : `${slot.retryAfter} seconds`;
   const msg = {
-    'onboard-target-cooldown': `A login email was sent to this person in the last 2 minutes. Try again in ${wait}.`,
-    'onboard-target-day': 'This person has been sent 5 login emails today. Try again tomorrow.',
+    'onboard-target-cooldown': `This person was given a new login in the last 2 minutes. Try again in ${wait}.`,
+    'onboard-target-day': 'This person has been given 5 new logins today. Try again tomorrow.',
     'onboard-caller-hour': `You’ve sent a lot of logins in the last hour. Try again in ${wait}.`,
     'onboard-caller-day': 'You’ve reached today’s limit for new logins. Try again tomorrow.',
     'onboard-global-day': 'The app has reached today’s limit for login emails. Try again tomorrow.',
@@ -282,7 +282,9 @@ function makeFunctions({ sendMail, mailSettings, mailReady, MAIL, staffName, cle
     return out;
   }
 
-  const resendStaffLogin = gatedOnCall({ ...MAIL, timeoutSeconds: 60 }, async (req) => {
+  // Who may hand out a new temporary password, and to whom. Shared by "Resend login" / "New password"
+  // (emailed) and "Show on screen" (handed over in person), so both have exactly the same rules.
+  async function checkResetTarget(req) {
     if (!req.auth) throw new HttpsError('unauthenticated', 'Please sign in.');
     const role = req.auth.token.role || '';
     // Owners only (Andy, 26 Oct): managers can't send logins or temporary passwords.
@@ -302,8 +304,37 @@ function makeFunctions({ sendMail, mailSettings, mailReady, MAIL, staffName, cle
       throw new HttpsError('failed-precondition', 'This person has no login any more. Remove them and add them again.');
     }
     if (!u.email) throw new HttpsError('failed-precondition', 'This login has no email address.');
+    const isNew = !!p.pendingFirstLogin && !p.passwordSetAt && (p.loginEmail || {}).kind !== 'reset';
+    return { uid, p, u, isNew };
+  }
+
+  const resendStaffLogin = gatedOnCall({ ...MAIL, timeoutSeconds: 60 }, async (req) => {
+    const { uid, p, u, isNew } = await checkResetTarget(req);
     await takeInviteSlot(req.auth.uid, uid);
-    return sendLogin({ uid, name: p.name, email: u.email, byUid: req.auth.uid, isNew: !!p.pendingFirstLogin && !p.passwordSetAt && (p.loginEmail || {}).kind !== 'reset' });
+    return sendLogin({ uid, name: p.name, email: u.email, byUid: req.auth.uid, isNew });
+  });
+
+  // "Show on screen" (Andy, 19 Nov): for staff whose mail provider silently drops the login email
+  // (e.g. iCloud). Same owner-only rules, same rate limit, same 7-day temporary password and the same
+  // gate (they must choose their own password at first sign-in) as Resend login. No email is sent.
+  // The password goes back to the caller once, in this response only: it is never written to
+  // Firestore or the logs. The staff record notes that it was shown, by whom and when.
+  const showStaffLogin = gatedOnCall({ timeoutSeconds: 30 }, async (req) => {
+    const { uid, p, u, isNew } = await checkResetTarget(req);
+    await takeInviteSlot(req.auth.uid, uid);
+    const { password, expiresAt } = await issueTempLogin(uid, { reason: isNew ? 'new' : 'reset', by: req.auth.uid });
+    try {
+      let byName = '';
+      try { byName = clean((await staffName(req.auth.uid)) || '', 80); } catch (e) { /* name is only a label */ }
+      await db().doc(`staff/${uid}`).set({
+        pendingFirstLogin: true,
+        loginEmail: { status: 'shown', at: FieldValue.serverTimestamp(), kind: isNew ? 'invite' : 'reset', by: req.auth.uid, byName },
+      }, { merge: true });
+    } catch (e) {
+      logger.warn('could not record login shown on screen', { uid, err: e.message });
+    }
+    logger.info('temporary password shown on screen', { uid, by: req.auth.uid });
+    return { uid, shown: true, emailSent: false, reason: '', expiresAt: expiresAt.toMillis(), tempPassword: password, email: u.email, name: p.name || '' };
   });
 
   // NOT gated: this is how a gated account gets out.
@@ -313,7 +344,7 @@ function makeFunctions({ sendMail, mailSettings, mailReady, MAIL, staffName, cle
     const d = req.data || {};
     const current = typeof d.currentPassword === 'string' ? d.currentPassword : '';
     const next = typeof d.newPassword === 'string' ? d.newPassword : '';
-    if (!current || current.length > 200) throw new HttpsError('invalid-argument', 'Enter the temporary password from your email.');
+    if (!current || current.length > 200) throw new HttpsError('invalid-argument', 'Enter your temporary password.');
     const gate = await gateRef(uid).get();
     const claimed = req.auth.token[CLAIM] === true;
     if (!gate.exists) {
@@ -383,7 +414,7 @@ function makeFunctions({ sendMail, mailSettings, mailReady, MAIL, staffName, cle
     }
   });
 
-  return { resendStaffLogin, completePasswordChange, expireTempLogins, sendLogin, takeInviteSlot };
+  return { resendStaffLogin, showStaffLogin, completePasswordChange, expireTempLogins, sendLogin, takeInviteSlot };
 }
 
 // Checks an email + password with Firebase Auth itself (Identity Toolkit). The emulator is used

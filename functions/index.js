@@ -304,6 +304,55 @@ exports.updateStaff = onCall(async (req) => {
   // No rota opt-out: any edit puts a still-employed person back on the rota if an old flag hid them.
   if (!current.terminated && current.onRota === false && current.developer !== true) update.onRota = true;
   if (current.terminated) throw new HttpsError('failed-precondition', 'This person has left. Add them again as a new login if they come back.');
+  // Login email (Andy, 19 Nov): "When I change someone's email, it should change it site wide." One
+  // change here moves their Firebase login, their staff record (every Hub email and screen reads one
+  // of those two) and the enquiry-recipient setting if their old address is listed there. Also fixes
+  // a login whose email doesn't match the staff record (e.g. a typo at sign-up): saving the record
+  // with the right address brings the login in line. Shifts, payslips and history are keyed by uid,
+  // which never changes, and so are roles and the two-step requirement.
+  let emailChange = null;
+  if (d.email != null && current.developer !== true && current.role !== 'developer') {
+    const newEmail = clean(d.email, 150).toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(newEmail) || !enquiry.isEmail(newEmail)) throw new HttpsError('invalid-argument', 'Enter a valid email address.');
+    let au;
+    try {
+      au = await auth.getUser(uid);
+    } catch (e) {
+      throw new HttpsError('failed-precondition', 'This person has no login any more. Remove them and add them again.');
+    }
+    const oldLogin = String(au.email || '').toLowerCase();
+    const oldDoc = String(current.email || '').toLowerCase();
+    if (newEmail !== oldLogin || newEmail !== oldDoc) {
+      if (uid === req.auth.uid) throw new HttpsError('failed-precondition', 'Change your own email under Account › Your details.');
+      if (current.primaryOwner === true || PRIMARY_OWNER_EMAILS.includes(oldLogin)) throw new HttpsError('failed-precondition', 'The main owner\u2019s email can only be changed by them, under Account › Your details.');
+      try {
+        const other = await auth.getUserByEmail(newEmail);
+        if (other && other.uid !== uid) throw new HttpsError('already-exists', `Another login already uses ${newEmail}. Each person needs their own email address.`);
+      } catch (e) {
+        if (e instanceof HttpsError) throw e;
+        if (e.code !== 'auth/user-not-found') throw e;
+      }
+      const dup = await db.collection('staff').where('email', '==', newEmail).limit(5).get();
+      if (dup.docs.some((x) => x.id !== uid && !x.get('terminated'))) {
+        throw new HttpsError('already-exists', `Someone else on the team already has ${newEmail} on their record. Each person needs their own email address.`);
+      }
+      const slot = await onboarding.takeSlots([
+        { kind: 'email-change-target-day', key: uid, windowMs: 24 * 3600000, max: 5 },
+        { kind: 'email-change-caller-hour', key: req.auth.uid, windowMs: 3600000, max: 15 },
+      ]);
+      if (!slot.ok) throw onboarding.limitError(slot);
+      emailChange = { newEmail, oldLogin, oldDoc, loginChanged: newEmail !== oldLogin };
+      // Stays verified, as createStaff does: two-step needs a verified email. Enrolled authenticators
+      // belong to the uid, so they keep working after the change.
+      if (emailChange.loginChanged) {
+        authUpdate.email = newEmail;
+        authUpdate.emailVerified = true;
+      }
+      update.email = newEmail;
+      update.emailChangedAt = FieldValue.serverTimestamp();
+      update.emailChangedBy = req.auth.uid;
+    }
+  }
   if (d.role != null && d.role !== current.role) {
     if (!ROLES.includes(d.role)) throw new HttpsError('invalid-argument', 'Unknown role.');
     if (uid === req.auth.uid) throw new HttpsError('failed-precondition', 'You cannot change your own role.');
@@ -326,9 +375,39 @@ exports.updateStaff = onCall(async (req) => {
     if (update.active === false || (current.active === false && update.active !== true)) throw new HttpsError('failed-precondition', 'Switch their login back on first.');
     await onboardingFns.takeInviteSlot(req.auth.uid, uid);
   }
-  if (Object.keys(authUpdate).length) await auth.updateUser(uid, authUpdate);
+  if (Object.keys(authUpdate).length) {
+    try {
+      await auth.updateUser(uid, authUpdate);
+    } catch (e) {
+      if (e.code === 'auth/email-already-exists') throw new HttpsError('already-exists', `Another login already uses ${emailChange ? emailChange.newEmail : 'that email'}. Each person needs their own email address.`);
+      if (e.code === 'auth/invalid-email') throw new HttpsError('invalid-argument', 'Enter a valid email address.');
+      throw e;
+    }
+  }
   if (update.role) await auth.setCustomUserClaims(uid, await claimsFor(uid, update.role));
-  if (update.active === false || update.role) await auth.revokeRefreshTokens(uid);
+  // A new login email signs them out everywhere, so they sign in again with the new address.
+  if (update.active === false || update.role || (emailChange && emailChange.loginChanged)) await auth.revokeRefreshTokens(uid);
+  if (emailChange) {
+    // Enquiry emails: if the owner-set recipient list names their old address, point it at the new one.
+    try {
+      const mref = db.doc('private/mail');
+      const ms = await mref.get();
+      const list = ms.exists && typeof ms.get('enquiryTo') === 'string' ? ms.get('enquiryTo') : '';
+      if (list) {
+        const olds = [emailChange.oldLogin, emailChange.oldDoc].filter(Boolean);
+        const parts = list.split(',').map((x) => x.trim()).filter(Boolean);
+        if (parts.some((x) => olds.includes(x.toLowerCase()))) {
+          const next = [...new Set(parts.map((x) => (olds.includes(x.toLowerCase()) ? emailChange.newEmail : x)))].join(', ');
+          await mref.update({ enquiryTo: next });
+          emailChange.enquiryUpdated = true;
+        }
+      }
+    } catch (e) {
+      logger.warn('could not update enquiry recipients after email change', { uid, err: e.message });
+    }
+    // Who and when only: no addresses in the logs.
+    logger.info('staff login email changed by owner', { uid, by: req.auth.uid, loginChanged: emailChange.loginChanged, enquiryUpdated: !!emailChange.enquiryUpdated });
+  }
   // Dropped to team member: clear any manager-only alerts (enquiries) they were sent as a manager.
   if (update.role === 'staff') {
     const old = await db.collection('notifications').where('uid', '==', uid).where('managerOnly', '==', true).get();
@@ -344,8 +423,9 @@ exports.updateStaff = onCall(async (req) => {
     update.updatedBy = req.auth.uid;
     await ref.update(update);
   }
-  if (login) return { ok: true, emailSent: login.emailSent, reason: login.reason, expiresAt: login.expiresAt, tempPassword: login.tempPassword || null };
-  return { ok: true, tempPassword: null };
+  const ec = emailChange ? { emailChanged: true, email: emailChange.newEmail, loginChanged: emailChange.loginChanged, pendingFirstLogin: !!current.pendingFirstLogin } : {};
+  if (login) return { ok: true, ...ec, emailSent: login.emailSent, reason: login.reason, expiresAt: login.expiresAt, tempPassword: login.tempPassword || null };
+  return { ok: true, ...ec, tempPassword: null };
 });
 
 // Terminate someone who has left.
@@ -755,6 +835,7 @@ exports.requestPasswordReset = require('./passwordReset').requestPasswordReset;
 // New staff: emailed temporary password, must choose their own on first sign-in. See onboarding.js.
 const onboardingFns = onboarding.makeFunctions({ sendMail, mailSettings, mailReady, MAIL, staffName, clean });
 exports.resendStaffLogin = onboardingFns.resendStaffLogin;
+exports.showStaffLogin = onboardingFns.showStaffLogin;
 exports.completePasswordChange = onboardingFns.completePasswordChange;
 exports.expireTempLogins = onboardingFns.expireTempLogins;
 
