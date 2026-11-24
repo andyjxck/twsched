@@ -22,7 +22,24 @@ service cloud.firestore {
       return request.auth.token.get('mfa', false) != true
         || request.auth.token.get('firebase', {}).get('sign_in_second_factor', null) != null;
     }
-    function role() { return signedIn() && request.auth.token.get('pwChange', false) != true && twoStepOk() ? request.auth.token.get('role', '') : ''; }
+    function baseRole() { return signedIn() && request.auth.token.get('pwChange', false) != true && twoStepOk() ? request.auth.token.get('role', '') : ''; }
+    // Developer access (Andy, 24 Nov 2026, functions/devAccess.js): the developer login is treated as an
+    // owner ONLY while the grant named in its token (devGrant, set by redeemDevCode after an owner's
+    // emailed code) is active, belongs to it and hasn't expired. Without that it gets nothing but its own
+    // staff record and its own grants, so the app shows staff information blacked out. Access stops at
+    // expiresAt (24h) or the moment an owner ends it. Its role can't change: staff and devAccess writes
+    // are server-only, and the callables still see role 'developer'.
+    function devGranted() {
+      let g = request.auth.token.get('devGrant', '');
+      return g is string && g.size() > 0 && g.size() < 64
+        && get(/databases/$(database)/documents/devAccess/$(g)).data.status == 'active'
+        && get(/databases/$(database)/documents/devAccess/$(g)).data.devUid == request.auth.uid
+        && request.time < get(/databases/$(database)/documents/devAccess/$(g)).data.expiresAt;
+    }
+    function role() {
+      let r = baseRole();
+      return r == 'developer' && devGranted() ? 'owner' : r;
+    }
     // User types: owner (everything), manager, payroll (payroll tools only, not on the rota), staff (team member).
     function isStaff() { return role() in ['owner', 'manager', 'staff']; }   // people on the rota
     function isManager() { return role() in ['owner', 'manager']; }
@@ -376,6 +393,18 @@ service cloud.firestore {
 
     // Mail settings and other server-only data.
     match /private/{docId} {
+      allow read, write: if false;
+    }
+
+    // Developer access log (functions/devAccess.js). Owners see every grant (who gave it, when it was
+    // used, when it ends); the developer sees only its own. Codes are kept hashed in devCodes, which
+    // nobody can read. All writes go through the owner-only and developer-only functions.
+    match /devAccess/{grantId} {
+      allow read: if baseRole() == 'owner'
+        || (baseRole() == 'developer' && resource.data.devUid == uid());
+      allow write: if false;
+    }
+    match /devCodes/{grantId} {
       allow read, write: if false;
     }
 

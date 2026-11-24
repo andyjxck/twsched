@@ -916,3 +916,9 @@ exports.onStaffDirectory = onDocumentWritten('staff/{uid}', async (event) => {
 // "Others on this shift": names, positions, times and the leader star for colleagues on an
 // overlapping published shift. Minimal projection for team members (see othersOnShift.js).
 exports.othersOnShift = require('./othersOnShift').othersOnShift;
+
+// Developer access: owner-issued emailed code -> 24 hours of owner-level access (functions/devAccess.js)
+const devAccessFns = require('./devAccess').makeFunctions({ onCall, MAIL, sendMail, managerIds, APP_URL });
+exports.grantDevAccess = devAccessFns.grantDevAccess;
+exports.redeemDevCode = devAccessFns.redeemDevCode;
+exports.endDevAccess = devAccessFns.endDevAccess;

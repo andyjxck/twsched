@@ -16,7 +16,17 @@ service firebase.storage {
             || request.auth.token.get('firebase', {}).get('sign_in_second_factor', null) != null)
         && !firestore.exists(/databases/(default)/documents/authGate/$(request.auth.uid));
     }
-    function role() { return request.auth != null && gateClear() ? request.auth.token.get('role', '') : ''; }
+    // Developer access (functions/devAccess.js): the developer login counts as an owner only while its
+    // granted devAccess record is active, its own and unexpired; otherwise it has no files at all.
+    function devGranted() {
+      let g = request.auth.token.get('devGrant', '');
+      return g is string && g.size() > 0 && g.size() < 64
+        && firestore.get(/databases/(default)/documents/devAccess/$(g)).data.status == 'active'
+        && firestore.get(/databases/(default)/documents/devAccess/$(g)).data.devUid == request.auth.uid
+        && request.time < firestore.get(/databases/(default)/documents/devAccess/$(g)).data.expiresAt;
+    }
+    function rawRole() { return request.auth != null && gateClear() ? request.auth.token.get('role', '') : ''; }
+    function role() { return rawRole() == 'developer' && devGranted() ? 'owner' : rawRole(); }
     function isManager() { return role() in ['owner', 'manager']; }
     function isStaff() { return role() in ['owner', 'manager', 'staff']; }
     function canPayroll() { return role() in ['owner', 'payroll']; }
